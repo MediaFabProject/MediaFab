@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MediaFab Queue Mode</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="../images/mediafab-favicon-green-lavender-light-32.png?v=12">
+    <link rel="stylesheet" href="mediafab-queue-theme.css?v=15">
+    <script type="module" src="multi-mode.js" defer></script>
+</head>
+<body>
+    <header class="page-header">
+        <div class="brand">
+            <img src="../images/mediafab-icon-green-lavender-light-128.png" alt="" width="52" height="52">
+            <div><p class="eyebrow">MediaFab</p><h1>Queue Mode</h1></div>
+        </div>
+        <div class="header-actions">
+            <div id="companion-status" class="connection-status is-connecting"><span></span> MediaFab Queue Mode Companion connecting…</div>
+            <label class="theme-control" for="darkModeToggle">
+                <span>Dark</span>
+                <span class="switch">
+                    <input type="checkbox" id="darkModeToggle">
+                    <span class="slider"></span>
+                </span>
+            </label>
+        </div>
+    </header>
+
+    <main>
+        <section class="card load-card collapsible-card" data-queue-collapsible="series-link">
+            <div class="section-heading">
+                <div><p class="eyebrow">Automatic Catalogue</p><h2>Load a Series from a Link Mode</h2></div>
+                <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+            </div>
+            <div class="collapsible-content">
+                <p class="section-description">Automatic season and episode discovery currently supports Crunchyroll and Disney+.</p>
+                <label for="source-link">Crunchyroll or Disney+ series or episode link</label>
+                <div class="input-button-row">
+                    <input id="source-link" type="url" placeholder="Paste a supported series or episode link" autocomplete="off">
+                    <button id="load-link" type="button">Load</button>
+                </div>
+                <p id="load-status" class="status-line">Enter a link to load its available seasons and episodes.</p>
+            </div>
+        </section>
+
+        <section class="card load-card collapsible-card" data-queue-collapsible="episode-links">
+            <div class="section-heading">
+                <div><p class="eyebrow">Manual Alternative</p><h2>Manual Queue Creation Mode</h2></div>
+                <div class="section-actions">
+                    <button id="add-manual-link" type="button" class="secondary">+ Add link</button>
+                    <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+                </div>
+            </div>
+            <div class="collapsible-content">
+                <p class="section-description">Add as many episode playing-page links as needed. These skip catalogue discovery and use the same one-by-one command queue.</p>
+                <div id="manual-link-list" class="manual-link-list"></div>
+                <button id="use-manual-links" type="button">Use manual links</button>
+            </div>
+        </section>
+
+        <section class="card catalogue-card collapsible-card" data-queue-collapsible="catalogue">
+            <div class="section-heading">
+                <div><p class="eyebrow">Selection</p><h2>Seasons and Episodes</h2></div>
+                <div class="section-actions">
+                    <label class="check-control"><input id="select-all" type="checkbox" disabled> Select all</label>
+                    <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+                </div>
+            </div>
+            <div class="collapsible-content">
+                <div id="catalogue-summary" class="summary-line">No media loaded</div>
+                <div id="catalogue" class="catalogue-empty">Loaded seasons and episodes will appear here.</div>
+            </div>
+        </section>
+
+        <section class="card output-card">
+            <div class="section-heading"><div><p class="eyebrow">Files</p><h2>Output</h2></div></div>
+            <label for="destination">Destination</label>
+            <div class="input-button-row">
+                <input id="destination" type="text" placeholder="/Volumes/Media/Shows">
+                <button id="browse-destination" type="button" class="secondary">Browse</button>
+            </div>
+            <p class="field-help">Each episode downloads directly into this folder. When MME is enabled, it renames and organizes the completed file using the same workflow as a normal single download.</p>
+        </section>
+
+        <section class="card media-options-card">
+            <div class="section-heading"><div><p class="eyebrow">Settings</p><h2>Media Options</h2></div></div>
+            <div class="option-grid">
+                <div><label for="container">Container</label><select id="container"><option value="mkv">MKV</option><option value="mp4">MP4</option></select></div>
+                <div><label for="video-mode">Video quality</label><select id="video-mode"><option value="best">Best available</option><option value="2160">Best 2160p / 3840-wide</option><option value="1080">Best 1080p / 1920-wide</option><option value="720">Best 720p / 1280-wide</option></select></div>
+                <div><label for="audio-mode">Audio</label><select id="audio-mode"><option value="best">Best track</option><option value="all">All tracks</option><option value="none">None</option></select></div>
+                <div><label for="subtitle-mode">Subtitles</label><select id="subtitle-mode"><option value="all">Full subtitles — all languages (deduplicated)</option><option value="english">English full subtitles only</option><option value="best">Best available full track</option><option value="none">None</option></select></div>
+            </div>
+            <div class="check-grid">
+                <label class="check-control"><input id="use-shaka-packager" type="checkbox"> Use Shaka Packager</label>
+                <label class="check-control"><input id="external-subtitles" type="checkbox"> Captured full subtitle sidecar</label>
+                <label class="check-control"><input id="keep-downloader-log" type="checkbox"> Keep downloader log</label>
+            </div>
+            <label for="additional-arguments">Additional arguments</label>
+            <input id="additional-arguments" type="text" placeholder="Optional extra N_m3u8DL-RE arguments">
+            <label for="argument-preview">Exact downloader options</label>
+            <output id="argument-preview" class="code-preview"></output>
+        </section>
+
+        <section class="card metadata-card">
+            <div class="section-heading">
+                <div><p class="eyebrow">Optional Handoff</p><h2>Metadata and Extras Getter</h2></div>
+                <label class="check-control"><input id="metadata-enabled" type="checkbox"> Use</label>
+            </div>
+            <p id="metadata-description" class="section-description">Uses each queued episode’s public detail-page link after its media and subtitles complete.</p>
+            <label for="metadata-getter">Getter</label>
+            <select id="metadata-getter"><option value="mme">Media Metadata and Extras Getter</option><option value="lpmaeg">Live Performance Metadata and Extras Getter</option></select>
+            <label for="metadata-detail-link">Public detail-page link fallback</label>
+            <div class="input-button-row">
+                <input id="metadata-detail-link" type="url" placeholder="Automatically uses each discovered episode link">
+                <button id="clear-metadata-link" type="button" class="secondary">Clear link</button>
+            </div>
+            <label for="metadata-project-folder">Getter Tool Folder</label>
+            <div class="input-button-row">
+                <input id="metadata-project-folder" type="text">
+                <button id="clear-metadata-setup" type="button" class="secondary">Clear setup</button>
+            </div>
+            <p id="metadata-status" class="status-line">Off</p>
+        </section>
+
+        <section class="card companion-card">
+            <div class="section-heading">
+                <div><p class="eyebrow">Configure</p><h2>Required Companion</h2></div>
+                <span class="requirement-note">Required for Queue Mode</span>
+            </div>
+            <p class="section-description">Queue Mode requires MediaFab Queue Mode Companion to receive each freshly captured command and open it immediately in Terminal.</p>
+            <label for="mediafab-companion-project-folder">MediaFab Queue Mode Companion Folder</label>
+            <div class="input-button-row">
+                <input id="mediafab-companion-project-folder" type="text" placeholder="/Users/you/MediaFab Queue Mode Companion">
+                <button id="clear-mediafab-companion-setup" type="button" class="secondary">Clear setup</button>
+            </div>
+            <label class="check-control companion-close-control"><input id="close-terminal-on-complete" type="checkbox"> Close Terminal windows when downloads are complete</label>
+            <p id="mediafab-companion-config-status" class="status-line">Required setup needed</p>
+        </section>
+
+        <section class="card processing-card">
+            <div class="section-heading"><div><p class="eyebrow">Execution</p><h2>Processing</h2></div></div>
+            <p class="section-description">Queue Mode processes the selected episodes one at a time. It creates and uses one dedicated browser tab, keeps it on each episode until that complete normal extension command finishes, then moves to the next.</p>
+            <div class="button-row">
+                <button id="start-selected" type="button">Start selected</button>
+                <button id="pause-queue" type="button" class="secondary">Pause queue</button>
+                <button id="cancel-current" type="button" class="secondary">Cancel current</button>
+                <button id="retry-failed" type="button" class="secondary">Retry failed</button>
+            </div>
+        </section>
+
+        <section class="card queue-card">
+            <div class="section-heading"><div><p class="eyebrow">Activity</p><h2>Live Queue</h2></div></div>
+            <div class="queue-table-wrap">
+                <table>
+                    <thead><tr><th>Media</th><th>Capture</th><th>Download</th><th>Subtitles</th><th>Metadata</th></tr></thead>
+                    <tbody id="queue-body"><tr><td colspan="5" class="empty-cell">No jobs queued.</td></tr></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

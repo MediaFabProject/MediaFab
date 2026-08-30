@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "MediaFab",
+  "version": "0.9.12",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "unlimitedStorage",
+    "webRequest",
+    "webRequestBlocking",
+    "nativeMessaging",
+    "clipboardWrite",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*/*"
+  ],
+  "action": {
+    "default_popup": "panel/panel.html",
+    "default_title": "MediaFab",
+    "default_icon": {
+      "16": "images/mediafab-icon-green-lavender-light-16.png",
+      "32": "images/mediafab-icon-green-lavender-light-32.png",
+      "48": "images/mediafab-icon-green-lavender-light-48.png",
+      "128": "images/mediafab-icon-green-lavender-light-128.png"
+    },
+    "theme_icons": [
+      {
+        "light": "images/mediafab-icon-green-lavender-light-16.png",
+        "dark": "images/mediafab-icon-green-lavender-light-16.png",
+        "size": 16
+      },
+      {
+        "light": "images/mediafab-icon-green-lavender-light-32.png",
+        "dark": "images/mediafab-icon-green-lavender-light-32.png",
+        "size": 32
+      }
+    ]
+  },
+  "icons": {
+    "16": "images/mediafab-icon-green-lavender-light-16.png",
+    "32": "images/mediafab-icon-green-lavender-light-32.png",
+    "48": "images/mediafab-icon-green-lavender-light-48.png",
+    "128": "images/mediafab-icon-green-lavender-light-128.png"
+  },
+  "background": {
+    "scripts": ["background.js"],
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mediafab@mediafab",
+      "strict_min_version": "101.0"
+    }
+  }
+}

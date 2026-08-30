@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="130" height="20" role="img" aria-label="License: GPL-3.0">
+  <title>License: GPL-3.0</title>
+  <defs><linearGradient id="mediafab" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#7EA874"/><stop offset="0.34" stop-color="#C3BAD9"/><stop offset="0.68" stop-color="#ABCCA5"/><stop offset="1" stop-color="#C588E1"/></linearGradient></defs>
+  <rect width="130" height="20" rx="3" fill="url(#mediafab)"/>
+  <text x="65" y="14" fill="#263126" font-family="Arial,Helvetica,sans-serif" font-size="11" text-anchor="middle">License · GPL-3.0</text>
+</svg>
