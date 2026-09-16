@@ -12,6 +12,9 @@ const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta
 const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 const originalReadme = readFileSync(new URL('../original-readme.md', import.meta.url), 'utf8');
 const statusBadge = readFileSync(new URL('../images/badges/status-garden.svg', import.meta.url), 'utf8');
+const queueScript = readFileSync(new URL('../multi-mode/multi-mode.js', import.meta.url), 'utf8');
+const panelScript = readFileSync(new URL('../panel/panel.js', import.meta.url), 'utf8');
+const paramountPlusSettings = readFileSync(new URL('../multi-mode/paramountplus-settings.mjs', import.meta.url), 'utf8');
 
 test('MediaFab is the visible extension name and normal Companion settings follow metadata', () => {
     assert.equal(manifest.name, 'MediaFab');
@@ -24,6 +27,52 @@ test('MediaFab is the visible extension name and normal Companion settings follo
 
 test('MediaFab uses its own permanent Firefox identity', () => {
     assert.equal(manifest.browser_specific_settings.gecko.id, 'mediafab@mediafab');
+});
+
+test('Paramount+ Queue Mode dispatches a structured external-backend request', () => {
+    assert.match(queueScript, /job\.executionMode === 'external-backend'/);
+    assert.match(queueScript, /companion\.request\('preflight_external_backends'/);
+    assert.match(queueScript, /companion\.request\('launch_external_job'/);
+    assert.doesNotMatch(queueScript, /command:\s*.*unshackle/i);
+});
+
+test('Paramount+ has dedicated normal and Queue settings and needs no separate detail link', () => {
+    assert.match(panel, /id="paramountplus-normal-card"/);
+    assert.match(panel, /data-collapsible-section="paramountplus-detected"/);
+    assert.match(panel, /<p class="eyebrow">External Backend<\/p><h2>P\+ Detected<\/h2>/);
+    assert.match(panel, /for="paramountplus-normal-preview">Backend options<\/label>/);
+    assert.ok(panel.indexOf('id="mediafab-companion-heading"') < panel.indexOf('id="paramountplus-normal-card"'));
+    assert.ok(panel.indexOf('id="paramountplus-normal-card"') < panel.indexOf('class="card keys-card"'));
+    assert.match(panelScript, /launch_external_single/);
+    assert.match(panelScript, /language: settings\.language === 'orig' \? '' : settings\.language/);
+    assert.match(panelScript, /downloadProcesses: settings\.downloadProcesses === '1' \? '' : settings\.downloadProcesses/);
+    assert.match(panelScript, /downloads: settings\.downloads === '1' \? '' : settings\.downloads/);
+    assert.match(panelScript, /\{ hiddenKeys: \['wanted', 'latestEpisode'\] \}/);
+    assert.match(panelScript, /if \(isParamountPlusPage\(pageUrl\)\) \{[\s\S]*?config\.projectFolder\.startsWith\('\/'\)/);
+    assert.match(queue, /id="paramountplus-options-card"/);
+    assert.doesNotMatch(`${panel}\n${queue}`, /Paramount\+ Backend/);
+    assert.match(queue, /does not need a separate detail link/i);
+    assert.doesNotMatch(panel, /Downloads the open Paramount\+ show, movie, or episode/);
+    assert.match(paramountPlusSettings, /TYPICAL_SELECTS = new Set\(\['quality', 'range', 'videoCodec', 'audioCodec'\]\)/);
+    assert.match(paramountPlusSettings, /className = 'secondary paramountplus-advanced-toggle'/);
+    assert.match(paramountPlusSettings, /advanced\.hidden = true/);
+});
+
+test('BBC iPlayer uses its required getter in normal and Queue Mode while Paramount+ remains the last provider card', () => {
+    assert.match(panel, /id="bbc-iplayer-normal-card"/);
+    assert.match(panel, /BBC iPlayer Detected/);
+    assert.ok(panel.indexOf('id="bbc-iplayer-normal-card"') < panel.indexOf('id="paramountplus-normal-card"'));
+    assert.match(queue, /id="bbc-iplayer-options-card"/);
+    assert.match(panelScript, /if \(isBBCIPlayerEpisodePage\(result\.url\)\) \{[\s\S]*?Do not expose the intercepted clear manifest/);
+    assert.match(panelScript, /await activateBBCIPlayerNormalModeFromPage\(result\.url\)/);
+    assert.match(panelScript, /return buildBBCIPlayerCommand\([\s\S]*?metadata\.pageUrl/);
+    assert.match(panelScript, /mediafabCompanion\.request\('preflight',[\s\S]*?executableName: 'python3'/);
+    assert.match(panel, /Optional detail-link override/);
+    assert.match(queue, /Optional detail-link override/);
+    assert.match(queue, /iPlayer Media and Extras Getter/);
+    assert.match(readme, /BBC iPlayer, Crunchyroll, Disney\+, HBO Max/);
+    assert.match(readme, /active UK VPN connection/);
+    assert.doesNotMatch(readme, new RegExp(['Automatic', 'Queue Mode'].join(' '), 'i'));
 });
 
 test('MediaFab branding is shared by the README, popup, Queue Mode, and manifest', () => {
@@ -47,7 +96,7 @@ test('MediaFab branding is shared by the README, popup, Queue Mode, and manifest
     assert.match(panel, /rel="icon"[^>]+mediafab-favicon-green-lavender-light-32\.png/);
     assert.match(queue, /rel="icon"[^>]+mediafab-favicon-green-lavender-light-32\.png/);
     assert.match(panel, /href="mediafab-theme\.css\?v=12"/);
-    assert.match(queue, /href="mediafab-queue-theme\.css\?v=15"/);
+    assert.match(queue, /href="mediafab-queue-theme\.css\?v=16"/);
     assert.equal((util.match(/images\/mediafab-icon-green-lavender-light-16\.png/g) || []).length, 2);
     assert.equal((util.match(/images\/mediafab-icon-green-lavender-light-128\.png/g) || []).length, 2);
     assert.doesNotMatch(util, /images\/legacy-media-(?:toolbar|mark)-/);
@@ -90,10 +139,10 @@ test('archived README separates current fork additions from the labeled upstream
 });
 
 test('main README documents the public workflow without publishing internal development guides', () => {
-    assert.match(readme, /How N_m3u8DL-RE Fits Into the Workflow/);
+    assert.match(readme, /## N_m3u8DL-RE/);
     assert.match(readme, /Protected records have a sparkle icon/);
     assert.match(readme, /A separate public\s+detail link is not needed when using this mode/);
-    assert.match(readme, /MediaFab Queue Mode Companion is a separate local application and is not\s+included in this repository/);
+    assert.match(readme, /MediaFab Companion is a separate local application and is not included in this\s+repository/);
     assert.match(readme, /Firefox Temporary Installation/);
     assert.doesNotMatch(readme, /Firefox Persistent Installation/);
     assert.match(readme, /MediaFab has not been tested on Chrome/);
@@ -128,9 +177,13 @@ test('Queue Mode exposes the shared popup dark mode beside Companion status', ()
 });
 
 test('Queue series artwork and information are aligned entirely to the left', () => {
+    const queueScript = readFileSync(new URL('../multi-mode/multi-mode.js', import.meta.url), 'utf8');
     assert.match(queueCss, /\.series-overview \{[^}]*text-align: left;/);
     assert.match(queueCss, /\.series-overview\.has-poster \{[^}]*align-items: start;[^}]*justify-items: start;/);
     assert.match(queueCss, /\.series-overview-copy \{[^}]*align-self: start;[^}]*text-align: left;/);
+    assert.match(queueScript, /poster\.naturalWidth > poster\.naturalHeight \? 'landscape' : 'portrait'/);
+    assert.match(queueCss, /\.series-overview\.has-poster\.has-landscape-poster \{[^}]*grid-template-columns: 280px minmax\(0, 1fr\);/);
+    assert.match(queueCss, /\.series-poster\.is-landscape \{[^}]*aspect-ratio: auto;[^}]*object-fit: contain;/);
 });
 
 test('Queue places Companion beside metadata and keeps Processing full width below it', () => {
@@ -161,6 +214,16 @@ test('normal Companion launch is explicit per captured command and never dispatc
     assert.match(panelScript, /class="companion-run-button"[^>]*hidden disabled>Run<\/button>/);
 });
 
+test('BBC iPlayer normal Run binding does not depend on asynchronous popup initialization', () => {
+    const runBinding = "document.getElementById('bbc-iplayer-normal-run').addEventListener('click', runBBCIPlayerNormal);";
+    const initialization = "document.addEventListener('DOMContentLoaded', async function () {";
+    assert.equal(panelScript.split(runBinding).length - 1, 1);
+    assert.ok(panelScript.indexOf(runBinding) < panelScript.indexOf(initialization));
+    assert.match(panelScript, /button\.textContent = 'Starting…';[\s\S]*?try \{[\s\S]*?refreshBBCIPlayerNormalStatus\('Starting BBC iPlayer…'\)/);
+    assert.match(panelScript, /button\.disabled = !activeBBCIPlayerUrl;/);
+    assert.match(panelScript, /if \(companionError\) throw new Error\(companionError\);/);
+});
+
 test('Queue creates a dedicated worker tab instead of selecting an existing user tab', () => {
     const queueScript = readFileSync(new URL('../multi-mode/multi-mode.js', import.meta.url), 'utf8');
     assert.match(queueScript, /chrome\.tabs\.create\(\{ url: 'about:blank', active: true \}\)/);
@@ -183,4 +246,11 @@ test('Live Queue has no nonfunctional row-selection controls', () => {
     assert.doesNotMatch(queueScript, /cancel-selected/);
     assert.match(queueScript, /job\.status === 'failed'[\s\S]*?queuePaused = true;[\s\S]*?Queue paused before opening another episode/);
     assert.match(queueScript, /\['waiting', 'completed', 'skipped', 'cancelled'\]\.includes\(job\.status\)/);
+});
+
+test('manual Queue rows provide a playing link and an optional per-item detail link', () => {
+    assert.match(queue, /Each item also has an optional metadata detail link/);
+    assert.match(queueScript, /Metadata detail link \$\{index \+ 1\} \(optional when shared\)/);
+    assert.match(queueScript, /detailUrl: value\.detailUrl\.trim\(\)/);
+    assert.match(queue, /Keep links from the same series together/i);
 });

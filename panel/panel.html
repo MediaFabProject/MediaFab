@@ -113,17 +113,20 @@
                 </div>
             </div>
             <div class="card-content">
-                <p class="card-description" id="metadata-getter-description">Uses a public detail-page link after this command completes.</p>
+                <p class="card-description" id="metadata-getter-description">Uses the current page after this command completes. Add a detail-link override only when needed.</p>
                 <label class="field-label" for="metadata-getter-type">Getter</label>
                 <select id="metadata-getter-type">
                     <option value="mme">Media Metadata and Extras Getter</option>
                     <option value="lpmaeg">Live Performance Metadata and Extras Getter</option>
                 </select>
-                <label class="field-label" for="metadata-getter-detail-link">Public detail-page link</label>
+                <div id="metadata-getter-detail-link-fields">
+                <label class="field-label" for="metadata-getter-detail-link">Optional detail-link override</label>
                 <div class="input-action-row">
                     <input type="url" id="metadata-getter-detail-link" placeholder="https://example.com/detail-page">
                     <button type="button" id="metadata-getter-clear-link" class="secondary">Clear link</button>
                 </div>
+                </div>
+                <p id="paramountplus-normal-metadata-note" class="card-description" hidden>Paramount+ automatically uses the open page URL. No separate detail link is needed.</p>
                 <label class="field-label" for="metadata-getter-project-folder">Getter Tool Folder</label>
                 <div class="input-action-row">
                     <input type="text" id="metadata-getter-project-folder" placeholder="/Users/you/Media-Metadata-and-Extras-Getter">
@@ -148,15 +151,42 @@
                 </div>
             </div>
             <div class="card-content">
-                <p class="card-description">MediaFab Queue Mode Companion adds a Run button beside each captured command. Nothing opens in Terminal until you click Run.</p>
-                <label class="field-label" for="mediafab-companion-project-folder">MediaFab Queue Mode Companion Folder</label>
+                <p class="card-description">MediaFab Companion adds a Run button beside each captured command. Nothing opens in Terminal until you click Run.</p>
+                <label class="field-label" for="mediafab-companion-project-folder">MediaFab Companion Folder</label>
                 <div class="input-action-row">
-                    <input type="text" id="mediafab-companion-project-folder" placeholder="/Users/you/MediaFab Queue Mode Companion">
+                    <input type="text" id="mediafab-companion-project-folder" placeholder="/Users/you/MediaFab Companion">
                     <button type="button" id="mediafab-companion-clear-setup" class="secondary">Clear setup</button>
                 </div>
                 <label class="field-label" for="mediafab-companion-destination">Normal Download Destination</label>
                 <input type="text" id="mediafab-companion-destination" placeholder="/Users/you/Downloads/Media">
                 <p id="mediafab-companion-status" class="handoff-status" role="status"></p>
+            </div>
+        </section>
+
+        <section class="card" id="bbc-iplayer-normal-card" data-collapsible-section="bbc-iplayer-detected" hidden>
+            <div class="card-heading">
+                <div><p class="eyebrow">Required Getter</p><h2>BBC iPlayer Detected</h2></div>
+                <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+            </div>
+            <div class="card-content">
+                <p class="card-description">Uses your separately installed iPlayer Media and Extras Getter for this clear BBC stream. Keep your UK VPN connected while it runs.</p>
+                <div id="bbc-iplayer-normal-settings-fields"></div>
+                <div class="button-row"><button type="button" id="bbc-iplayer-normal-run">Run</button></div>
+                <p id="bbc-iplayer-normal-status" class="handoff-status" role="status"></p>
+            </div>
+        </section>
+
+        <section class="card" id="paramountplus-normal-card" data-collapsible-section="paramountplus-detected" hidden>
+            <div class="card-heading">
+                <div><p class="eyebrow">External Backend</p><h2>P+ Detected</h2></div>
+                <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+            </div>
+            <div class="card-content">
+                <div id="paramountplus-normal-settings-fields"></div>
+                <label class="field-label" for="paramountplus-normal-preview">Backend options</label>
+                <output id="paramountplus-normal-preview" class="code-preview"></output>
+                <div class="button-row"><button type="button" id="paramountplus-normal-run">Run</button></div>
+                <p id="paramountplus-normal-status" class="handoff-status" role="status"></p>
             </div>
         </section>
 

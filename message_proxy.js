@@ -49,8 +49,11 @@ function findMultiModePlaybackControl() {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const playbackHosts = {
+        'amazon-prime': /(^|\.)(?:primevideo\.com|amazon\.(?:ae|ca|cn|com|de|eg|es|fr|in|it|nl|pl|sa|se|sg|co\.jp|co\.uk|com\.au|com\.be|com\.br|com\.mx|com\.tr))$/i,
         crunchyroll: /(^|\.)crunchyroll\.com$/i,
         disneyplus: /(^|\.)disneyplus\.com$/i,
+        max: /(^|\.)(?:hbomax\.com|max\.com)$/i,
+        'pbs-kids': /(^|\.)pbskids\.org$/i,
     };
     const expectedHost = playbackHosts[message?.provider];
     if (message?.type !== 'MULTI_MODE_ACTIVATE_PLAYBACK' || !expectedHost) {

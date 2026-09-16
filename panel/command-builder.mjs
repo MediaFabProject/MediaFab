@@ -3,13 +3,27 @@ import {
     createMMEHandoffCommand,
     createCrunchyrollDownloadMarkerCommand,
     createCrunchyrollMediaResolutionCommand,
-    createCrunchyrollTemporarySaveNameArgument,
-    getCrunchyrollDetailLink,
+    createProviderIdentitySaveNameArgument,
+    getMMEProviderIdentity,
+    removeSaveNameArgument,
 } from './metadata-links.mjs';
 
-export function formatHeaders(headers, option, quoteChar, safeQuoteChar) {
+export function quoteCommandValue(value, useSingleQuotes = false) {
+    const text = String(value);
+    if (useSingleQuotes) {
+        return `'${text.replaceAll("'", "'\"'\"'")}'`;
+    }
+    return `"${text
+        .replaceAll('\\', '\\\\')
+        .replaceAll('"', '\\"')
+        .replaceAll('$', '\\$')
+        .replaceAll('`', '\\`')}"`;
+}
+
+export function formatHeaders(headers, option, quoteChar, _safeQuoteChar) {
+    const useSingleQuotes = quoteChar === "'";
     return Object.entries(headers || {}).map(
-        ([key, value]) => `${option} ${quoteChar}${key}: ${String(value).replaceAll(quoteChar, safeQuoteChar)}${quoteChar}`
+        ([key, value]) => `${option} ${quoteCommandValue(`${key}: ${value}`, useSingleQuotes)}`
     ).join(' ');
 }
 
@@ -25,6 +39,138 @@ export function removeIncompatibleHlsVideoSelector(additionalArgs) {
         .replace(/(?:^|\s)(?:-sv|--select-video)(?:\s+|=)(?:"[^"]*"|'[^']*'|\S+)/g, ' ')
         .replace(/\s{2,}/g, ' ')
         .trim();
+}
+
+export function useBestAvailableHlsVideoSelector(additionalArgs) {
+    return `${removeIncompatibleHlsVideoSelector(additionalArgs)} -sv best`.trim();
+}
+
+function isMaxPage(value) {
+    try {
+        return /(^|\.)(?:max\.com|hbomax\.com)$/i.test(new URL(value).hostname);
+    } catch {
+        return false;
+    }
+}
+
+function isDisneyPlusPage(value) {
+    try {
+        return /(^|\.)disneyplus\.com$/i.test(new URL(value).hostname);
+    } catch {
+        return false;
+    }
+}
+
+function isCrunchyrollPage(value) {
+    try {
+        return /(^|\.)crunchyroll\.com$/i.test(new URL(value).hostname);
+    } catch {
+        return false;
+    }
+}
+
+function isHlsManifest(metadata) {
+    return /^HLS_/i.test(String(metadata?.type || ''))
+        || /\.m3u8(?:[?#]|$)/i.test(String(metadata?.url || ''));
+}
+
+function normalizedKeyId(value) {
+    return String(value || '').replace(/[^a-f0-9]/gi, '').toLowerCase();
+}
+
+function capturedKeyIds(keyString) {
+    return new Set([...String(keyString || '').matchAll(/--key\s+([a-f0-9-]+):/gi)]
+        .map((match) => normalizedKeyId(match[1]))
+        .filter(Boolean));
+}
+
+function removeDownloaderSelectors(argumentsText, options) {
+    const names = options.join('|');
+    return String(argumentsText || '')
+        .replace(new RegExp(`(?:^|\\s)(?:${names})(?:\\s+|=)(?:"[^"]*"|'[^']*'|\\S+)`, 'gi'), ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+}
+
+function maxRequestedVideoWidth(argumentsText) {
+    const selector = String(argumentsText || '').match(
+        /(?:^|\s)(?:-sv|--select-video)(?:\s+|=)(?:"([^"]*)"|'([^']*)'|(\S+))/i,
+    );
+    const value = selector ? (selector[1] || selector[2] || selector[3] || '') : '';
+    return Number(value.match(/(?:^|:)res=(\d+)/i)?.[1]) || Number.POSITIVE_INFINITY;
+}
+
+function maxRequestedAudioLanguage(argumentsText) {
+    const selector = String(argumentsText || '').match(
+        /(?:^|\s)(?:-sa|--select-audio)(?:\s+|=)(?:"([^"]*)"|'([^']*)'|(\S+))/i,
+    );
+    const value = selector ? (selector[1] || selector[2] || selector[3] || '') : '';
+    return value.match(/(?:^|:)lang=([a-z]{2,3}(?:-[a-z0-9]+)?)/i)?.[1]?.toLowerCase() || '';
+}
+
+export function createMaxTrackArguments(metadata, keyString, additionalArguments, useSingleQuotes = false) {
+    if (!isMaxPage(metadata?.pageUrl)) {
+        return { arguments: additionalArguments, error: '' };
+    }
+    const periodId = String(metadata.maxContentPeriodId || '');
+    const keys = capturedKeyIds(keyString);
+    if (!periodId || keys.size === 0) {
+        return {
+            arguments: additionalArguments,
+            error: 'Max programme keys and its protected content period have not been paired yet. Restart this title from its Play action and wait for the protected capture.',
+        };
+    }
+
+    const requestedWidth = maxRequestedVideoWidth(additionalArguments);
+    const videoTracks = (metadata.maxVideoTracks || [])
+        .filter((track) => keys.has(normalizedKeyId(track.keyId)) && Number(track.width) > 0)
+        .sort((left, right) => Number(right.width) - Number(left.width));
+    const videoTrack = videoTracks.find((track) => Number(track.width) <= requestedWidth)
+        || videoTracks[videoTracks.length - 1];
+    if (!videoTrack) {
+        return {
+            arguments: additionalArguments,
+            error: 'Max returned audio keys but no key for any programme video tier. Restart playback so MediaFab can capture the matching video key.',
+        };
+    }
+
+    const audioDisabled = /(?:^|\s)(?:-da|--drop-audio)(?:\s+|=)(?:["']?all["']?)(?=\s|$)/i.test(additionalArguments);
+    const requestedLanguage = maxRequestedAudioLanguage(additionalArguments);
+    let audioTracks = (metadata.maxAudioTracks || []).filter((track) =>
+        !track.descriptive && keys.has(normalizedKeyId(track.keyId))
+    );
+    if (requestedLanguage) {
+        const matchingLanguage = audioTracks.filter((track) =>
+            String(track.language || '').toLowerCase().startsWith(requestedLanguage)
+        );
+        if (matchingLanguage.length > 0) {
+            audioTracks = matchingLanguage;
+        }
+    }
+    const audioTrack = audioTracks[0];
+    if (!audioDisabled && !audioTrack) {
+        return {
+            arguments: additionalArguments,
+            error: 'Max did not provide a keyed normal audio track for the protected programme.',
+        };
+    }
+
+    let rewritten = removeDownloaderSelectors(additionalArguments, [
+        '-sv', '--select-video', '-sa', '--select-audio', '-da', '--drop-audio',
+    ]);
+    const periodPattern = `^${periodId.replace(/[^a-z0-9_-]/gi, '')}$`;
+    const videoSelector = `period=${periodPattern}:res=^${Number(videoTrack.width)}x:for=best`;
+    rewritten = `${rewritten} -sv ${quoteCommandValue(videoSelector, useSingleQuotes)}`.trim();
+    if (audioDisabled) {
+        rewritten = `${rewritten} -da all`;
+    } else {
+        const ids = audioTrack.representationIds
+            .map((id) => String(id).replace(/[^a-z0-9_-]/gi, ''))
+            .filter(Boolean);
+        const audioSelector = `period=${periodPattern}:id=^(${ids.join('|')})$:for=best`;
+        rewritten = `${rewritten} -sa ${quoteCommandValue(audioSelector, useSingleQuotes)}`;
+    }
+    return { arguments: rewritten.trim(), error: '' };
 }
 
 function joinOutputPath(outputDirectory, filename) {
@@ -364,6 +510,29 @@ function createCompletionCommand(quoteChar) {
     return `printf '\\n%s\\n' ${quoteChar}MediaFab note: Complete. Output is ready.${quoteChar}`;
 }
 
+export function createCrunchyrollTimelineCorrectionCommand() {
+    return [
+        '() {',
+        'emulate -L zsh;',
+        'local mediafab_video_pts mediafab_audio_pts mediafab_video_offset mediafab_extension mediafab_corrected;',
+        'mediafab_video_pts=$(ffprobe -v error -select_streams v:0 -read_intervals \'%+#1\' -show_entries packet=pts_time -of csv=p=0 "$mediafab_media_file" | sed -n \'1p\');',
+        'mediafab_audio_pts=$(ffprobe -v error -select_streams a:0 -read_intervals \'%+#1\' -show_entries packet=pts_time -of csv=p=0 "$mediafab_media_file" | sed -n \'1p\');',
+        '[[ "$mediafab_video_pts" == <->(|.<->) && "$mediafab_audio_pts" == <->(|.<->) ]] || return 0;',
+        'awk -v video="$mediafab_video_pts" -v audio="$mediafab_audio_pts" \'BEGIN { difference = video - audio; if (difference < 0) difference = -difference; exit !(difference >= 0.250 && difference <= 30.000) }\' || return 0;',
+        'mediafab_video_offset=$(awk -v video="$mediafab_video_pts" -v audio="$mediafab_audio_pts" \'BEGIN { printf "%.6f", audio - video }\');',
+        'mediafab_extension="${mediafab_media_file:e:l}";',
+        '[[ "$mediafab_extension" == (mkv|mp4|mov|m4v) ]] || return 0;',
+        'mediafab_corrected=$(mktemp "${mediafab_media_file:h}/.mediafab-sync.XXXXXX.${mediafab_extension}") || return 1;',
+        'if ffmpeg -hide_banner -loglevel error -nostats -y -itsoffset "$mediafab_video_offset" -i "$mediafab_media_file" -i "$mediafab_media_file" -map 0:v -map \'1:a?\' -map \'1:s?\' -map \'1:d?\' -map \'1:t?\' -map_metadata 1 -map_chapters 1 -c copy -avoid_negative_ts disabled "$mediafab_corrected"; then',
+        'mv -- "$mediafab_corrected" "$mediafab_media_file";',
+        'else',
+        'rm -f -- "$mediafab_corrected";',
+        'return 1;',
+        'fi;',
+        '}',
+    ].join(' ');
+}
+
 function createMetadataStartCommand(type, config, quoteChar) {
     if (!config.enabled) {
         return '';
@@ -388,9 +557,16 @@ export function buildNormalMediaCommand({
     const quoteChar = useSingleQuotes ? "'" : '"';
     const safeQuoteChar = useSingleQuotes ? '"' : "'";
     const headerString = formatHeaders(metadata.headers, '-H', quoteChar, safeQuoteChar);
-    let commandArgs = metadata.isHlsPlaylistFallback
-        ? removeIncompatibleHlsVideoSelector(additionalArguments)
+    const useBestAvailableHlsVideo = metadata.isHlsPlaylistFallback
+        || (isDisneyPlusPage(metadata.pageUrl) && isHlsManifest(metadata));
+    let commandArgs = useBestAvailableHlsVideo
+        ? useBestAvailableHlsVideoSelector(additionalArguments)
         : additionalArguments;
+    const maxTrackSelection = createMaxTrackArguments(metadata, keyString, commandArgs, useSingleQuotes);
+    if (maxTrackSelection.error) {
+        return `MediaFab command unavailable: ${maxTrackSelection.error}`;
+    }
+    commandArgs = maxTrackSelection.arguments;
     const requestedSubtitleLanguage = getSelectedSubtitleLanguage(commandArgs);
     const subtitles = requestedSubtitleLanguage
         ? filterExternalSubtitlesByLanguage(metadata.subtitles || [], requestedSubtitleLanguage)
@@ -404,17 +580,20 @@ export function buildNormalMediaCommand({
         commandArgs = `${commandArgs} -ds all`.trim();
     }
     const resolvedOutputDirectory = outputDirectory || getOutputDirectory(commandArgs);
-    const usesAutomaticCrunchyrollHandoff = metadataGetterConfig.enabled
-        && metadataGetterType === 'mme'
-        && Boolean(getCrunchyrollDetailLink(metadata.pageUrl));
-    const usesResolvedMMEHandoff = metadataGetterConfig.enabled
-        && metadataGetterType === 'mme';
-    const temporarySaveNameArgument = usesAutomaticCrunchyrollHandoff
-        ? createCrunchyrollTemporarySaveNameArgument(metadata.pageUrl, commandArgs, quoteChar)
+    const usesResolvedMMEHandoff = metadataGetterConfig.enabled && metadataGetterType === 'mme';
+    const needsResolvedMediaFile = usesResolvedMMEHandoff || isCrunchyrollPage(metadata.pageUrl);
+    const providerIdentity = usesResolvedMMEHandoff
+        ? getMMEProviderIdentity(metadata.pageUrl, metadata.amazonEpisodeDetailUrl)
+        : null;
+    if (providerIdentity) {
+        commandArgs = removeSaveNameArgument(commandArgs);
+    }
+    const temporarySaveNameArgument = providerIdentity
+        ? createProviderIdentitySaveNameArgument(metadata.pageUrl, metadata.amazonEpisodeDetailUrl)
         : '';
     const videoCommand = [
         executableName,
-        `${quoteChar}${metadata.url}${quoteChar}`,
+        quoteCommandValue(metadata.url, useSingleQuotes),
         headerString,
         keyString,
         !metadata.isPublicMedia && useShakaPackager ? '--use-shaka-packager' : '',
@@ -432,12 +611,18 @@ export function buildNormalMediaCommand({
     const metadataHandoff = metadataGetterConfig.enabled
         ? (metadataGetterType === 'lpmaeg'
             ? createLPMAEGHandoffCommand(metadataGetterConfig, resolvedOutputDirectory, metadata.pageUrl)
-            : createMMEHandoffCommand(metadataGetterConfig, resolvedOutputDirectory, metadata.pageUrl))
+            : createMMEHandoffCommand(
+                metadataGetterConfig,
+                resolvedOutputDirectory,
+                metadata.pageUrl,
+                metadata.amazonEpisodeDetailUrl,
+            ))
         : '';
     const command = [
-        usesResolvedMMEHandoff ? createCrunchyrollDownloadMarkerCommand(resolvedOutputDirectory) : '',
+        needsResolvedMediaFile ? createCrunchyrollDownloadMarkerCommand(resolvedOutputDirectory) : '',
         videoCommand,
-        usesResolvedMMEHandoff ? createCrunchyrollMediaResolutionCommand(resolvedOutputDirectory) : '',
+        needsResolvedMediaFile ? createCrunchyrollMediaResolutionCommand(resolvedOutputDirectory) : '',
+        isCrunchyrollPage(metadata.pageUrl) ? createCrunchyrollTimelineCorrectionCommand() : '',
         createSubtitleStatusCommand(subtitleCount, quoteChar),
         subtitleCommands.length > 0 ? 'mediafab_subtitle_failures=0' : '',
         subtitleCommands.length > 0 ? createSubtitleSpinnerFunction() : '',
@@ -455,7 +640,7 @@ export function buildNormalMediaCommand({
         metadataHandoff,
         createCompletionCommand(quoteChar),
     ].filter(Boolean).join(' && ');
-    return usesResolvedMMEHandoff
+    return needsResolvedMediaFile
         ? `() { emulate -L zsh; ${command} }`
         : command;
 }

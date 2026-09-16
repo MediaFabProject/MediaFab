@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>MediaFab Queue Mode</title>
     <link rel="icon" type="image/png" sizes="32x32" href="../images/mediafab-favicon-green-lavender-light-32.png?v=12">
-    <link rel="stylesheet" href="mediafab-queue-theme.css?v=15">
+    <link rel="stylesheet" href="mediafab-queue-theme.css?v=16">
     <script type="module" src="multi-mode.js" defer></script>
 </head>
 <body>
@@ -15,7 +15,7 @@
             <div><p class="eyebrow">MediaFab</p><h1>Queue Mode</h1></div>
         </div>
         <div class="header-actions">
-            <div id="companion-status" class="connection-status is-connecting"><span></span> MediaFab Queue Mode Companion connecting…</div>
+            <div id="companion-status" class="connection-status is-connecting"><span></span> MediaFab Companion connecting…</div>
             <label class="theme-control" for="darkModeToggle">
                 <span>Dark</span>
                 <span class="switch">
@@ -33,8 +33,8 @@
                 <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
             </div>
             <div class="collapsible-content">
-                <p class="section-description">Automatic season and episode discovery currently supports Crunchyroll and Disney+.</p>
-                <label for="source-link">Crunchyroll or Disney+ series or episode link</label>
+                <p class="section-description">Catalogue loading supports Amazon Prime Video, BBC iPlayer, Crunchyroll, Disney+, HBO Max, PBS KIDS, and Paramount+. Paramount+ uses the loaded show, movie, or episode URL directly.</p>
+                <label for="source-link">Supported series, movie, or episode link</label>
                 <div class="input-button-row">
                     <input id="source-link" type="url" placeholder="Paste a supported series or episode link" autocomplete="off">
                     <button id="load-link" type="button">Load</button>
@@ -52,7 +52,7 @@
                 </div>
             </div>
             <div class="collapsible-content">
-                <p class="section-description">Add as many episode playing-page links as needed. These skip catalogue discovery and use the same one-by-one command queue.</p>
+                <p class="section-description">Add as many media playing-page links as needed. Each item also has an optional metadata detail link. Keep links from the same series together: enter one detail link for one item in that series and leave the other detail-link fields in that group blank. Media Metadata and Extras Getter can use that one link for the series.</p>
                 <div id="manual-link-list" class="manual-link-list"></div>
                 <button id="use-manual-links" type="button">Use manual links</button>
             </div>
@@ -79,10 +79,10 @@
                 <input id="destination" type="text" placeholder="/Volumes/Media/Shows">
                 <button id="browse-destination" type="button" class="secondary">Browse</button>
             </div>
-            <p class="field-help">Each episode downloads directly into this folder. When MME is enabled, it renames and organizes the completed file using the same workflow as a normal single download.</p>
+            <p class="field-help">Each episode downloads directly into this folder. When Media Metadata and Extras Getter is enabled, it renames and organizes the completed file using the same workflow as a normal single download.</p>
         </section>
 
-        <section class="card media-options-card">
+        <section class="card media-options-card" id="standard-media-options-card">
             <div class="section-heading"><div><p class="eyebrow">Settings</p><h2>Media Options</h2></div></div>
             <div class="option-grid">
                 <div><label for="container">Container</label><select id="container"><option value="mkv">MKV</option><option value="mp4">MP4</option></select></div>
@@ -101,7 +101,21 @@
             <output id="argument-preview" class="code-preview"></output>
         </section>
 
-        <section class="card metadata-card">
+        <section class="card media-options-card" id="paramountplus-options-card" hidden>
+            <div class="section-heading"><div><p class="eyebrow">External Backend</p><h2>Paramount+ Download Options</h2></div></div>
+            <p class="section-description">These settings replace the N_m3u8DL-RE options for Paramount+. Private account, proxy, CDM, and remote-service setup stays only in your local Companion configuration.</p>
+            <div id="paramountplus-settings-fields"></div>
+            <label for="paramountplus-argument-preview">Exact public media options</label>
+            <output id="paramountplus-argument-preview" class="code-preview"></output>
+        </section>
+
+        <section class="card media-options-card" id="bbc-iplayer-options-card" hidden>
+            <div class="section-heading"><div><p class="eyebrow">Required Getter</p><h2>BBC iPlayer Options</h2></div></div>
+            <p class="section-description">BBC iPlayer uses your separately installed iPlayer Media and Extras Getter for clear streams, subtitles, metadata, artwork, and organization. A UK VPN connection is required while it runs.</p>
+            <div id="bbc-iplayer-settings-fields"></div>
+        </section>
+
+        <section class="card metadata-card" id="metadata-card">
             <div class="section-heading">
                 <div><p class="eyebrow">Optional Handoff</p><h2>Metadata and Extras Getter</h2></div>
                 <label class="check-control"><input id="metadata-enabled" type="checkbox"> Use</label>
@@ -109,11 +123,14 @@
             <p id="metadata-description" class="section-description">Uses each queued episode’s public detail-page link after its media and subtitles complete.</p>
             <label for="metadata-getter">Getter</label>
             <select id="metadata-getter"><option value="mme">Media Metadata and Extras Getter</option><option value="lpmaeg">Live Performance Metadata and Extras Getter</option></select>
-            <label for="metadata-detail-link">Public detail-page link fallback</label>
+            <div id="metadata-detail-link-fields">
+            <label for="metadata-detail-link">Optional detail-link override</label>
             <div class="input-button-row">
                 <input id="metadata-detail-link" type="url" placeholder="Automatically uses each discovered episode link">
                 <button id="clear-metadata-link" type="button" class="secondary">Clear link</button>
             </div>
+            </div>
+            <p id="paramountplus-metadata-link-note" class="field-help" hidden>Paramount+ does not need a separate detail link. Media Metadata and Extras Getter receives the loaded Paramount+ URL and each exact completed file.</p>
             <label for="metadata-project-folder">Getter Tool Folder</label>
             <div class="input-button-row">
                 <input id="metadata-project-folder" type="text">
@@ -127,10 +144,10 @@
                 <div><p class="eyebrow">Configure</p><h2>Required Companion</h2></div>
                 <span class="requirement-note">Required for Queue Mode</span>
             </div>
-            <p class="section-description">Queue Mode requires MediaFab Queue Mode Companion to receive each freshly captured command and open it immediately in Terminal.</p>
-            <label for="mediafab-companion-project-folder">MediaFab Queue Mode Companion Folder</label>
+            <p class="section-description">Queue Mode requires MediaFab Companion to receive each freshly captured command and open it immediately in Terminal.</p>
+            <label for="mediafab-companion-project-folder">MediaFab Companion Folder</label>
             <div class="input-button-row">
-                <input id="mediafab-companion-project-folder" type="text" placeholder="/Users/you/MediaFab Queue Mode Companion">
+                <input id="mediafab-companion-project-folder" type="text" placeholder="/Users/you/MediaFab Companion">
                 <button id="clear-mediafab-companion-setup" type="button" class="secondary">Clear setup</button>
             </div>
             <label class="check-control companion-close-control"><input id="close-terminal-on-complete" type="checkbox"> Close Terminal windows when downloads are complete</label>

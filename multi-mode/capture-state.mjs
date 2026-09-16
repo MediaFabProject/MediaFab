@@ -91,7 +91,7 @@ export class MultiModeCaptureOwnership {
         this.byTabId = new Map();
     }
 
-    register({ tabId, jobId, navigationId, pageUrl }) {
+    register({ tabId, jobId, navigationId, pageUrl, amazonEpisodeIdentity = null }) {
         if (!Number.isInteger(tabId) || tabId < 0) {
             throw new TypeError('A Queue Mode capture needs a browser tab ID.');
         }
@@ -109,6 +109,10 @@ export class MultiModeCaptureOwnership {
             readySent: false,
             manifests: new Map(),
             subtitles: new Map(),
+            amazonEpisodeIdentity: null,
+            expectedAmazonEpisodeIdentity: amazonEpisodeIdentity && typeof amazonEpisodeIdentity === 'object'
+                ? { ...amazonEpisodeIdentity }
+                : null,
         };
         this.byTabId.set(tabId, state);
         return state;
@@ -125,6 +129,7 @@ export class MultiModeCaptureOwnership {
         state.readySent = false;
         state.manifests.clear();
         state.subtitles.clear();
+        state.amazonEpisodeIdentity = null;
         delete state.protectedResult;
         return state;
     }
@@ -184,12 +189,34 @@ export class MultiModeCaptureOwnership {
         return { state, added, late: state.readySent };
     }
 
-    bestManifest(tabId) {
+    recordAmazonEpisodeIdentity(tabId, identity) {
+        const state = this.get(tabId);
+        if (!state?.armed || !identity || typeof identity !== 'object') {
+            return null;
+        }
+        state.amazonEpisodeIdentity = {
+            ...identity,
+            observedAtMs: this.now(),
+        };
+        return state;
+    }
+
+    bestManifest(tabId, pssh = null) {
         const state = this.get(tabId);
         if (!state) {
             return null;
         }
-        return [...state.manifests.values()].sort((left, right) =>
+        let candidates = [...state.manifests.values()];
+        if (pssh) {
+            const psshAware = candidates.filter((manifest) =>
+                Array.isArray(manifest.psshValues) && manifest.psshValues.length > 0
+            );
+            if (psshAware.length > 0) {
+                candidates = psshAware.filter((manifest) => manifest.psshValues.includes(pssh));
+                if (candidates.length === 0) return null;
+            }
+        }
+        return candidates.sort((left, right) =>
             (MANIFEST_PRIORITY[right.type] || 0) - (MANIFEST_PRIORITY[left.type] || 0)
                 || right.capturedAtMs - left.capturedAtMs
         )[0] || null;
@@ -197,9 +224,23 @@ export class MultiModeCaptureOwnership {
 
     createReadyCapture(tabId, { keys = [], pssh = null } = {}) {
         const state = this.get(tabId);
-        const manifest = this.bestManifest(tabId);
+        const manifest = this.bestManifest(tabId, pssh);
+        let isAmazonPrime = false;
+        try {
+            isAmazonPrime = /(^|\.)(?:primevideo\.com|amazon\.)/i.test(new URL(state?.pageUrl || '').hostname);
+        } catch {
+            // Non-Prime captures retain their existing readiness rules.
+        }
+        const observedAmazonIdentity = manifest?.amazonEpisodeIdentity?.status === 'resolved'
+            ? manifest.amazonEpisodeIdentity
+            : (state?.amazonEpisodeIdentity?.status === 'resolved' ? state.amazonEpisodeIdentity : null);
+        const expectedAmazonIdentity = state?.expectedAmazonEpisodeIdentity;
+        const amazonIdentityMismatch = isAmazonPrime && observedAmazonIdentity && expectedAmazonIdentity
+            && observedAmazonIdentity.detailUrl !== expectedAmazonIdentity.detailUrl;
+        const resolvedAmazonIdentity = observedAmazonIdentity || expectedAmazonIdentity;
         if (!state || !manifest
-            || (state.protected && (!hasUsableContentKeys(keys) || !hasRequiredProtectedHeaders(manifest, state.pageUrl)))) {
+            || (state.protected && (!hasUsableContentKeys(keys) || !hasRequiredProtectedHeaders(manifest, state.pageUrl)))
+            || (isAmazonPrime && (!resolvedAmazonIdentity || amazonIdentityMismatch))) {
             return null;
         }
         state.readySent = true;
@@ -213,6 +254,9 @@ export class MultiModeCaptureOwnership {
                 keys,
                 pssh,
                 subtitles: [...state.subtitles.values()],
+                amazonEpisodeIdentity: isAmazonPrime
+                    ? resolvedAmazonIdentity
+                    : (manifest.amazonEpisodeIdentity || state.amazonEpisodeIdentity),
             },
         };
     }

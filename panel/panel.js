@@ -12,6 +12,19 @@ import {
 } from "./metadata-links.mjs";
 import { buildNormalMediaCommand } from "./command-builder.mjs";
 import { CompanionClient } from "../multi-mode/companion.mjs";
+import {
+    buildParamountPlusArguments,
+    getParamountPlusPageTitle,
+    isParamountPlusPage,
+    mountParamountPlusSettings,
+    normalizeParamountPlusSettings,
+} from "../multi-mode/paramountplus-settings.mjs";
+import {
+    buildBBCIPlayerCommand,
+    isBBCIPlayerEpisodePage,
+    mountBBCIPlayerSettings,
+    normalizeBBCIPlayerSettings,
+} from "../multi-mode/bbc-iplayer-settings.mjs";
 
 const key_container = document.getElementById('key-container');
 const mediafab_companion_enabled = document.getElementById('mediafab-companion-enabled');
@@ -21,6 +34,28 @@ const mediafab_companion_status = document.getElementById('mediafab-companion-st
 const mediafabCompanion = new CompanionClient();
 let mediafabCompanionConnected = false;
 let connectedMediaFabCompanionFolder = '';
+let activeParamountPlusUrl = '';
+let activeParamountPlusTitle = '';
+let paramountPlusSettings = normalizeParamountPlusSettings();
+let bbcIPlayerSettings = normalizeBBCIPlayerSettings();
+let activeBBCIPlayerUrl = '';
+let activeBBCIPlayerTitle = '';
+
+function buildParamountPlusNormalArguments(settings) {
+    return buildParamountPlusArguments({
+        ...settings,
+        wanted: '',
+        latestEpisode: false,
+        language: settings.language === 'orig' ? '' : settings.language,
+        downloadProcesses: settings.downloadProcesses === '1' ? '' : settings.downloadProcesses,
+        downloads: settings.downloads === '1' ? '' : settings.downloads,
+    });
+}
+
+// BBC iPlayer normal mode must remain usable even when a later asynchronous
+// popup initialization step fails. Function declarations are hoisted, and the
+// deferred module runs after the panel markup has been parsed.
+document.getElementById('bbc-iplayer-normal-run').addEventListener('click', runBBCIPlayerNormal);
 
 // ================ Main ================
 document.getElementById('open-multi-mode').addEventListener('click', async () => {
@@ -182,17 +217,26 @@ function getMMEValidationMessage(config, pageUrl = '') {
         return '';
     }
 
+    if (isParamountPlusPage(pageUrl)) {
+        return config.projectFolder.startsWith('/')
+            ? ''
+            : 'Enter Media Metadata and Extras Getter’s absolute project-folder path.';
+    }
+
     try {
-        const parsed = new URL(resolveMMEDetailLink(config, pageUrl));
+        const parsed = new URL(resolveMMEDetailLink({
+            ...config,
+            preferDetailLinkOverride: Boolean(config.detailLink),
+        }, pageUrl));
         if (!['http:', 'https:'].includes(parsed.protocol)) {
-            return 'Enter a public http(s) detail link.';
+            return 'Open a supported provider page or enter an optional detail-link override.';
         }
     } catch {
-        return 'Enter a public http(s) detail link.';
+        return 'Open a supported provider page or enter an optional detail-link override.';
     }
 
     if (!config.projectFolder.startsWith('/')) {
-        return 'Enter MME’s absolute project-folder path.';
+        return 'Enter Media Metadata and Extras Getter’s absolute project-folder path.';
     }
 
     return '';
@@ -221,7 +265,7 @@ function getLPMAEGValidationMessage(config, pageUrl = '') {
     }
 
     if (!config.projectFolder.startsWith('/')) {
-        return 'Enter LPMAEG’s absolute project-folder path.';
+        return 'Enter Live Performance Metadata and Extras Getter’s absolute project-folder path.';
     }
 
     return '';
@@ -254,22 +298,24 @@ async function refreshMetadataGetterStatus() {
     const type = metadata_getter_type.value;
     const config = currentMetadataGetterConfig();
     const activePageUrl = await getActivePageUrl();
+    const isParamountPlus = isParamountPlusPage(activePageUrl);
     const autoDetailLink = type === 'lpmaeg'
-        ? (!config.detailLink && getBroadwayHDDetailLink(activePageUrl))
-        : getCrunchyrollDetailLink(activePageUrl);
-    const autoProviderName = type === 'lpmaeg' ? 'BroadwayHD' : 'Crunchyroll';
+        ? getBroadwayHDDetailLink(activePageUrl) || activePageUrl
+        : resolveMMEDetailLink({ ...config, detailLink: '' }, activePageUrl);
     const validationMessage = type === 'mme'
         ? getMMEValidationMessage(config, activePageUrl)
         : getLPMAEGValidationMessage(config, activePageUrl);
     const isLivePerformance = type === 'lpmaeg';
 
     metadata_getter_status.className = 'handoff-status';
-    metadata_getter_description.textContent = isLivePerformance
-        ? 'Uses a public detail-page link after this command completes. BroadwayHD video pages can be added automatically.'
-        : 'Uses a public detail-page link after this command completes. Crunchyroll watch pages can be added automatically.';
+    metadata_getter_description.textContent = isParamountPlus
+        ? 'Paramount+ automatically hands Media Metadata and Extras Getter the open page URL and each exact final media file.'
+        : isLivePerformance
+        ? 'Uses the current page after this command completes. Add a detail-link override only when needed.'
+        : 'Uses the current page after this command completes. Add a detail-link override only when needed.';
     metadata_getter_detail_link.placeholder = autoDetailLink
-        ? `${autoProviderName} detail link auto added`
-        : 'https://example.com/detail-page';
+        ? 'Optional override for the current page'
+        : 'Optional detail-link override';
     metadata_getter_project_folder.placeholder = isLivePerformance
         ? '/Users/you/Live-Performance-Metadata-and-Extras-Getter'
         : '/Users/you/Media-Metadata-and-Extras-Getter';
@@ -285,9 +331,161 @@ async function refreshMetadataGetterStatus() {
     }
 
     metadata_getter_status.classList.add('is-ready');
-    metadata_getter_status.textContent = autoDetailLink
-        ? `${autoProviderName} detail link auto added`
+    metadata_getter_status.textContent = isParamountPlus
+        ? 'Ready — no separate detail link is needed.'
         : 'Ready — runs after the completed download, subtitles, and cleanup.';
+}
+
+async function refreshParamountPlusNormalMode() {
+    let activeTab = {};
+    try {
+        [activeTab = {}] = await chrome.tabs.query({ active: true, currentWindow: true });
+    } catch {
+        activeTab = {};
+    }
+    const pageUrl = activeTab.url || '';
+    activeParamountPlusUrl = isParamountPlusPage(pageUrl) ? pageUrl : '';
+    const active = Boolean(activeParamountPlusUrl);
+    activeParamountPlusTitle = active
+        ? getParamountPlusPageTitle(activeParamountPlusUrl, activeTab.title || '')
+        : '';
+    document.getElementById('paramountplus-normal-card').hidden = !active;
+    document.getElementById('metadata-getter-detail-link-fields').hidden = active;
+    document.getElementById('paramountplus-normal-metadata-note').hidden = !active;
+    if (!active) return;
+    if (metadata_getter_type.value !== 'mme') {
+        metadata_getter_type.value = 'mme';
+        await SettingsManager.saveSelectedMetadataGetter('mme');
+        await loadSelectedMetadataGetterConfig();
+    }
+    await refreshParamountPlusNormalStatus();
+}
+
+async function refreshParamountPlusNormalStatus(message = '', warning = false) {
+    const status = document.getElementById('paramountplus-normal-status');
+    const button = document.getElementById('paramountplus-normal-run');
+    const config = currentMediaFabCompanionConfig();
+    let error = !config.enabled ? 'Enable the Companion below.' : mediaFabCompanionValidationMessage(config);
+    const mme = currentMetadataGetterConfig();
+    if (!error && mme.enabled && !mme.projectFolder.startsWith('/')) error = 'Enter Media Metadata and Extras Getter’s absolute project-folder path.';
+    status.className = 'handoff-status';
+    if (error || warning) status.classList.add('is-warning'); else status.classList.add('is-ready');
+    status.textContent = message || error || '';
+    button.disabled = Boolean(error) || !activeParamountPlusUrl;
+}
+
+async function runParamountPlusNormal() {
+    const button = document.getElementById('paramountplus-normal-run');
+    button.disabled = true;
+    button.textContent = 'Starting…';
+    try {
+        const companionConfig = currentMediaFabCompanionConfig();
+        const metadata = currentMetadataGetterConfig();
+        await mediafabCompanion.request('preflight_external_backends', {
+            backendIds: ['paramountplus'], destination: companionConfig.destination,
+            companionFolder: companionConfig.projectFolder,
+            jobs: [{ backendId: 'paramountplus', sourceUrl: activeParamountPlusUrl,
+                outputDirectory: companionConfig.destination,
+                backendArguments: buildParamountPlusNormalArguments(paramountPlusSettings),
+                metadata: { ...metadata, getter: 'mme' } }],
+        });
+        await mediafabCompanion.request('launch_external_single', {
+            userInitiated: true, companionFolder: companionConfig.projectFolder,
+            job: { provider: 'paramountplus', backendId: 'paramountplus', executionMode: 'external-backend',
+                seriesTitle: activeParamountPlusTitle || getParamountPlusPageTitle(activeParamountPlusUrl), sourceUrl: activeParamountPlusUrl,
+                outputDirectory: companionConfig.destination,
+                backendArguments: buildParamountPlusNormalArguments(paramountPlusSettings),
+                metadata: { ...metadata, getter: 'mme' } },
+        });
+        await refreshParamountPlusNormalStatus('Started Paramount+ in Terminal.');
+        return;
+    } catch (error) {
+        await refreshParamountPlusNormalStatus(`Could not start Paramount+ — ${error.message}`, true);
+    } finally {
+        button.textContent = 'Run';
+        if (!document.getElementById('paramountplus-normal-status').textContent) {
+            await refreshParamountPlusNormalStatus();
+        }
+    }
+}
+
+async function refreshBBCIPlayerNormalMode() {
+    let activeTab = {};
+    try {
+        [activeTab = {}] = await chrome.tabs.query({ active: true, currentWindow: true });
+    } catch {
+        activeTab = {};
+    }
+    activeBBCIPlayerUrl = isBBCIPlayerEpisodePage(activeTab.url || '') ? activeTab.url : '';
+    activeBBCIPlayerTitle = String(activeTab.title || 'BBC iPlayer').replace(/\s*[-|].*BBC iPlayer.*$/i, '').trim();
+    document.getElementById('bbc-iplayer-normal-card').hidden = !activeBBCIPlayerUrl;
+    await refreshBBCIPlayerNormalStatus();
+}
+
+async function activateBBCIPlayerNormalModeFromPage(pageUrl) {
+    if (!isBBCIPlayerEpisodePage(pageUrl)) return false;
+    activeBBCIPlayerUrl = pageUrl;
+    document.getElementById('bbc-iplayer-normal-card').hidden = false;
+    await refreshBBCIPlayerNormalStatus();
+    return true;
+}
+
+async function refreshBBCIPlayerNormalStatus(message = '', warning = false) {
+    const status = document.getElementById('bbc-iplayer-normal-status');
+    const button = document.getElementById('bbc-iplayer-normal-run');
+    const companion = currentMediaFabCompanionConfig();
+    let error = !companion.enabled ? 'Enable the Companion below.' : mediaFabCompanionValidationMessage(companion);
+    if (!error && !bbcIPlayerSettings.projectFolder.startsWith('/')) {
+        error = 'Enter iPlayer Media and Extras Getter’s absolute project-folder path.';
+    }
+    status.className = 'handoff-status';
+    if (error || warning) status.classList.add('is-warning'); else status.classList.add('is-ready');
+    status.textContent = message || error || '';
+    button.disabled = !activeBBCIPlayerUrl;
+}
+
+async function runBBCIPlayerNormal() {
+    const button = document.getElementById('bbc-iplayer-normal-run');
+    button.disabled = true;
+    button.textContent = 'Starting…';
+    try {
+        await refreshBBCIPlayerNormalStatus('Starting BBC iPlayer…');
+        const companion = currentMediaFabCompanionConfig();
+        const companionError = !companion.enabled
+            ? 'Enable the Companion below.'
+            : mediaFabCompanionValidationMessage(companion);
+        if (companionError) throw new Error(companionError);
+        const command = buildBBCIPlayerCommand(
+            activeBBCIPlayerUrl,
+            companion.destination,
+            bbcIPlayerSettings,
+        );
+        const capturedAtMs = Date.now();
+        await mediafabCompanion.request('preflight', {
+            companionFolder: companion.projectFolder,
+            destination: companion.destination,
+            executableName: 'python3',
+        });
+        await mediafabCompanion.request('launch_single', {
+            userInitiated: true,
+            companionFolder: companion.projectFolder,
+            executableName: 'python3',
+            outputDirectory: companion.destination,
+            title: activeBBCIPlayerTitle || 'BBC iPlayer',
+            capture: { capturedAtMs },
+            command,
+        });
+        await refreshBBCIPlayerNormalStatus('Started BBC iPlayer in Terminal.');
+    } catch (error) {
+        await refreshBBCIPlayerNormalStatus(`Could not start BBC iPlayer — ${error.message}`, true);
+    } finally {
+        button.textContent = 'Run';
+        button.disabled = false;
+        await refreshBBCIPlayerNormalStatus(
+            document.getElementById('bbc-iplayer-normal-status').textContent,
+            document.getElementById('bbc-iplayer-normal-status').classList.contains('is-warning'),
+        );
+    }
 }
 
 async function loadSelectedMetadataGetterConfig() {
@@ -302,6 +500,7 @@ async function saveSelectedMetadataGetterConfigAndRefresh() {
     await saveStoredMetadataGetterConfig(metadata_getter_type.value, currentMetadataGetterConfig());
     await refreshMetadataGetterStatus();
     await refreshGeneratedCommands();
+    await refreshParamountPlusNormalStatus();
 }
 
 metadata_getter_type.addEventListener('change', async () => {
@@ -322,7 +521,7 @@ document.getElementById('metadata-getter-clear-setup').addEventListener('click',
 });
 // ========================================================
 
-// ================ MediaFab Queue Mode Companion ================
+// ================ MediaFab Companion ================
 function currentMediaFabCompanionConfig() {
     return {
         enabled: mediafab_companion_enabled.checked,
@@ -340,17 +539,17 @@ function mediaFabCompanionValidationMessage(config = currentMediaFabCompanionCon
         return '';
     }
     if (!config.projectFolder.startsWith('/')) {
-        return 'Enter MediaFab Queue Mode Companion’s absolute folder path.';
+        return 'Enter MediaFab Companion’s absolute folder path.';
     }
     if (!config.destination.startsWith('/')) {
         return 'Enter an absolute normal download destination.';
     }
     if (!mediafabCompanionConnected) {
-        return 'MediaFab Queue Mode Companion is unavailable.';
+        return 'MediaFab Companion is unavailable.';
     }
     if (connectedMediaFabCompanionFolder
         && normalizedFolder(config.projectFolder) !== normalizedFolder(connectedMediaFabCompanionFolder)) {
-        return 'This folder does not match the installed MediaFab Queue Mode Companion. Reinstall it from this folder.';
+        return 'This folder does not match the installed MediaFab Companion. Reinstall it from this folder.';
     }
     return '';
 }
@@ -387,7 +586,7 @@ function refreshNormalCompanionRunButtons() {
             ? 'This captured command was already started.'
             : !config.enabled
                 ? 'Enable Optional Companion to run this command.'
-                : validationMessage || 'Run this command with MediaFab Queue Mode Companion.';
+                : validationMessage || 'Run this command with MediaFab Companion.';
     }
 }
 
@@ -404,16 +603,32 @@ async function runCapturedCommandWithCompanion({ result, select, command, keyStr
     refreshMediaFabCompanionStatus('Starting the selected captured command…');
     try {
         const launchCommand = await createCommand(select.value, keyString, config.destination);
-        if (/ setup incomplete: /i.test(launchCommand)) {
+        if (/ setup incomplete: /i.test(launchCommand)
+            || launchCommand.startsWith('MediaFab command unavailable:')) {
             throw new Error(launchCommand);
         }
         command.value = launchCommand;
-        const executableName = await SettingsManager.getExecutableName();
+        const isBBCIPlayer = isBBCIPlayerEpisodePage(result.url);
+        const executableName = isBBCIPlayer ? 'python3' : await SettingsManager.getExecutableName();
         let title = 'Media download';
-        try {
-            title = new URL(result.url).hostname;
-        } catch {
-            // Keep the generic title when the captured page URL is unavailable.
+        const amazonEpisode = result.amazonEpisodeIdentity;
+        if (amazonEpisode?.status === 'resolved') {
+            const position = amazonEpisode.seasonNumber > 0 && amazonEpisode.episodeNumber > 0
+                ? `S${String(amazonEpisode.seasonNumber).padStart(2, '0')}E${String(amazonEpisode.episodeNumber).padStart(2, '0')}`
+                : '';
+            title = [
+                amazonEpisode.seriesTitle || 'Amazon Prime Video',
+                position,
+                amazonEpisode.episodeTitle || amazonEpisode.compactGTI,
+            ].filter(Boolean).join(' — ');
+        } else if (isBBCIPlayer) {
+            title = activeBBCIPlayerTitle || 'BBC iPlayer';
+        } else {
+            try {
+                title = new URL(result.url).hostname;
+            } catch {
+                // Keep the generic title when the captured page URL is unavailable.
+            }
         }
         await mediafabCompanion.request('launch_single', {
             capture: { capturedAtMs: Number(result.timestamp) * 1000 },
@@ -437,6 +652,8 @@ async function runCapturedCommandWithCompanion({ result, select, command, keyStr
 async function saveMediaFabCompanionConfigAndRefresh() {
     await SettingsManager.saveMediaFabCompanionConfig(currentMediaFabCompanionConfig());
     refreshMediaFabCompanionStatus();
+    await refreshParamountPlusNormalStatus();
+    await refreshBBCIPlayerNormalStatus();
 }
 
 mediafab_companion_enabled.addEventListener('change', saveMediaFabCompanionConfigAndRefresh);
@@ -792,17 +1009,37 @@ function createMMEStartCommand(config, quoteChar) {
 
 async function createCommand(json, key_string = '', outputDirectory = null) {
     const metadata = JSON.parse(json);
+    if (isBBCIPlayerEpisodePage(metadata.pageUrl)) {
+        try {
+            return buildBBCIPlayerCommand(
+                metadata.pageUrl,
+                outputDirectory || currentMediaFabCompanionConfig().destination,
+                bbcIPlayerSettings,
+            );
+        } catch (error) {
+            return `BBC iPlayer setup incomplete: ${error.message}`;
+        }
+    }
     const useSingleQuotes = await SettingsManager.getUseSingleQuotes();
     const executableName = await SettingsManager.getExecutableName();
     const useShakaPackager = await SettingsManager.getUseShakaPackager();
     const additionalArgs = await SettingsManager.getAdditionalArguments();
     const metadataGetterType = await SettingsManager.getSelectedMetadataGetter();
     const metadataGetterConfig = await getStoredMetadataGetterConfig(metadataGetterType);
+    if (metadataGetterType === 'mme') {
+        const explicitOverride = Boolean(metadataGetterConfig.detailLink);
+        if (!explicitOverride) {
+            metadataGetterConfig.detailLink = metadata.maxMetadataDetailUrl
+                || metadata.disneyMetadataDetailUrl
+                || '';
+        }
+        metadataGetterConfig.preferDetailLinkOverride = Boolean(metadataGetterConfig.detailLink);
+    }
     const metadataGetterValidationMessage = metadataGetterType === 'lpmaeg'
         ? getLPMAEGValidationMessage(metadataGetterConfig, metadata.pageUrl)
         : getMMEValidationMessage(metadataGetterConfig, metadata.pageUrl);
     if (metadataGetterValidationMessage) {
-        const getterName = metadataGetterType === 'lpmaeg' ? 'LPMAEG' : 'MME';
+        const getterName = metadataGetterType === 'lpmaeg' ? 'Live Performance Metadata and Extras Getter' : 'Media Metadata and Extras Getter';
         return `${getterName} setup incomplete: ${metadataGetterValidationMessage}`;
     }
     return buildNormalMediaCommand({
@@ -845,6 +1082,28 @@ async function refreshGeneratedCommands() {
 }
 
 async function appendLog(result) {
+    if (isBBCIPlayerEpisodePage(result.url)) {
+        // BBC iPlayer is downloaded only through its dedicated getter card.
+        // Do not expose the intercepted clear manifest as an N_m3u8DL-RE job.
+        await activateBBCIPlayerNormalModeFromPage(result.url);
+        return;
+    }
+    const maxEpisodeId = String(result.url || '').match(
+        /^https?:\/\/(?:www\.|play\.)?(?:hbo)?max\.com\/video\/watch\/([0-9a-f-]{36})(?:\/|$)/i,
+    )?.[1]?.toLowerCase() || '';
+    const protectedPssh = result.type === 'PUBLIC' ? '' : String(result.pssh_data || '');
+    if (protectedPssh) {
+        const priorCapture = [...key_container.querySelectorAll('.log-container')]
+            .find((entry) => entry.dataset.capturePssh === protectedPssh);
+        priorCapture?.remove();
+    }
+    if (maxEpisodeId) {
+        const existing = key_container.querySelector(`[data-max-episode-id="${maxEpisodeId}"]`);
+        if (existing?.dataset.protected === 'true' && result.type === 'PUBLIC') {
+            return;
+        }
+        existing?.remove();
+    }
     const isPublicMedia = result.type === 'PUBLIC';
     const key_string = isPublicMedia ? '' : (result.keys || []).map(key => `--key ${key.kid}:${key.k}`).join(' ');
     const date = new Date(result.timestamp * 1000);
@@ -852,6 +1111,11 @@ async function appendLog(result) {
 
     const logContainer = document.createElement('div');
     logContainer.classList.add('log-container');
+    if (protectedPssh) logContainer.dataset.capturePssh = protectedPssh;
+    if (maxEpisodeId) {
+        logContainer.dataset.maxEpisodeId = maxEpisodeId;
+        logContainer.dataset.protected = String(!isPublicMedia);
+    }
     logContainer.innerHTML = `
         <button class="toggleButton">+</button>
         <div class="expandableDiv collapsed">
@@ -876,7 +1140,7 @@ async function appendLog(result) {
                 <span class="key-detail-label">Manifest</span><select id="manifest" class="text-box"></select>
             </div>
             <div class="expanded-only key-detail-row command-copy" hidden>
-                <a href="#" title="Click to copy">Command</a><input type="text" id="command" class="text-box"><button type="button" class="companion-run-button" title="Run this command with MediaFab Queue Mode Companion" hidden disabled>Run</button>
+                <a href="#" title="Click to copy">Command</a><input type="text" id="command" class="text-box"><button type="button" class="companion-run-button" title="Run this command with MediaFab Companion" hidden disabled>Run</button>
             </div>` : ''}
         </div>`;
 
@@ -901,6 +1165,10 @@ async function appendLog(result) {
                     ...manifest,
                     subtitles: result.subtitles || [],
                     pageUrl: result.url,
+                    maxMetadataDetailUrl: result.maxMetadataDetailUrl || '',
+                    disneyMetadataDetailUrl: result.disneyMetadataDetailUrl || '',
+                    amazonEpisodeDetailUrl: result.amazonEpisodeIdentity?.detailUrl || '',
+                    amazonEpisodeIdentity: result.amazonEpisodeIdentity || null,
                     isPublicMedia,
                 })
             );
@@ -988,6 +1256,31 @@ document.addEventListener('DOMContentLoaded', async function () {
     downloader_args.value = await SettingsManager.getAdditionalArguments();
     metadata_getter_type.value = await SettingsManager.getSelectedMetadataGetter();
     await loadSelectedMetadataGetterConfig();
+    paramountPlusSettings = normalizeParamountPlusSettings(await SettingsManager.getParamountPlusSettings());
+    bbcIPlayerSettings = normalizeBBCIPlayerSettings(await SettingsManager.getBBCIPlayerSettings());
+    mountBBCIPlayerSettings(
+        document.getElementById('bbc-iplayer-normal-settings-fields'),
+        bbcIPlayerSettings,
+        async (next) => {
+            bbcIPlayerSettings = normalizeBBCIPlayerSettings(next);
+            await SettingsManager.saveBBCIPlayerSettings(bbcIPlayerSettings);
+            await refreshBBCIPlayerNormalStatus();
+        },
+    );
+    mountParamountPlusSettings(
+        document.getElementById('paramountplus-normal-settings-fields'),
+        paramountPlusSettings,
+        async (next) => {
+            paramountPlusSettings = normalizeParamountPlusSettings(next);
+            document.getElementById('paramountplus-normal-preview').textContent = buildParamountPlusNormalArguments(paramountPlusSettings).join(' ');
+            await SettingsManager.saveParamountPlusSettings(paramountPlusSettings);
+        },
+        { hiddenKeys: ['wanted', 'latestEpisode'] },
+    );
+    document.getElementById('paramountplus-normal-preview').textContent = buildParamountPlusNormalArguments(paramountPlusSettings).join(' ');
+    document.getElementById('paramountplus-normal-run').addEventListener('click', runParamountPlusNormal);
+    await refreshParamountPlusNormalMode();
+    await refreshBBCIPlayerNormalMode();
     SettingsManager.setSelectedDeviceType(await SettingsManager.getSelectedDeviceType());
     await DeviceManager.loadSetAllWidevineDevices();
     await DeviceManager.selectWidevineDevice(await DeviceManager.getSelectedWidevineDevice());

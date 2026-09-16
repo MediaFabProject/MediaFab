@@ -13,32 +13,88 @@ before it is committed.
 
 ### Added
 
+- Add HBO Max to the optional metadata-provider badge and Queue Mode catalogue
+  discovery. Public `/show/<UUID>` links now populate the normal season and
+  episode picker, and each job retains its exact episode UUID player link.
+  Keep that authenticated player link for capture and filename identity while
+  passing the canonical public show link to each exact-file Media Metadata and
+  Extras Getter handoff.
+- Add BBC iPlayer normal and Queue Mode through the separately installed
+  iPlayer Media and Extras Getter. MediaFab provides the normal season and
+  episode picker, BBC quality and subtitle settings, exact per-episode PID
+  links, sequential Companion dispatch, and the selected destination while the
+  getter owns clear-stream downloading, subtitles, metadata, artwork, and
+  organization. A UK VPN connection is required for BBC access.
+- Route BBC iPlayer episode pages exclusively through iPlayer Media and Extras
+  Getter in the normal workflow. Do not display an intercepted BBC manifest as
+  a separate N_m3u8DL-RE command, and preflight the getter route before opening
+  its Terminal job.
+- Make the individual-workflow detail-link field an optional override. Use the
+  current public page automatically when no override is supplied.
+- Restore Media Metadata and Extras Getter to every individual command chain.
+  Each handoff now receives the exact completed video file and the current
+  item's provider page after subtitles, naming, and cleanup, and Queue Mode
+  waits for that handoff before advancing.
+
 - Add a compact **Queue** entry point beside the popup theme control and a
   dedicated **Queue Mode** extension tab with visible catalogue, output, media,
   subtitle, metadata/extras, processing, and live-queue controls.
 - Add a provider-adapter boundary and job model for one-page-at-a-time capture,
   immediate companion dispatch, and sequential download completion before the
   active browser tab advances to the next selected episode.
-- Add Crunchyroll as the first automatically discovered Queue Mode provider,
+- Add Crunchyroll as the first Queue Mode provider with catalogue discovery,
   using the same
-  anonymous public catalogue and version-selection rules as MME for series,
+  anonymous public catalogue and version-selection rules as Media Metadata and Extras Getter for series,
   seasons, episodes, and canonical watch links.
-- Add Disney+ automatic Queue Mode catalogue discovery from public series or
+- Add Disney+ Queue Mode catalogue discovery from public series or
   `/play/...` pages, including complete public seasons, episode positions,
   synopses, thumbnails, and canonical episode playback links.
-- Hand Disney+ episode jobs to MME using the exact newly completed media file,
+- Add PBS KIDS Queue Mode catalogue discovery from series,
+  full-episode playlist, or episode watch pages, including current numbered
+  episodes, canonical watch links, playback activation, existing-episode
+  skipping, and exact-file Media Metadata and Extras Getter handoffs.
+- Add Amazon Prime Video Queue Mode catalogue discovery with a
+  separate GTI, compact GTI, ASIN set, playback ID, and exact episode detail
+  link for every queued episode. Carry that verified identity into capture
+  ownership so Prime's natively loaded manifest can produce a Queue command
+  without depending on the page fetch hook. Prime metadata handoffs bind
+  protected playback to that episode identity and pass the final completed
+  media file.
+- Add Paramount+ normal and Queue Mode through one structured external-backend
+  handoff. The popup can run the open show, movie, or episode URL without
+  playback capture; Queue Mode can submit a whole movie or complete series.
+  Movie links become one complete-movie job and show links become one
+  all-seasons-and-episodes job without depending on browser playback capture.
+  Keep the backend argv and every private setting in an owner-only, gitignored
+  Companion configuration file.
+- Use Paramount+'s title-specific public catalogue poster in the Queue Mode
+  series overview, with title artwork or an episode image as the fallback
+  instead of the generic Paramount+ sharing image.
+- Add shared Paramount+ GUI controls for applicable quality, dynamic range,
+  codecs, bitrates, languages, subtitles, episode ranges, mux behavior, naming,
+  resume, and performance options. Hide N_m3u8DL-RE controls for Paramount+
+  and reject private connection/CDM/proxy flags at the Companion boundary.
+- Add synchronous per-file Paramount+ Media Metadata and Extras Getter handoff after the backend creates
+  each final file. Reuse the loaded Paramount+ URL, pass the exact final media
+  path, require no separate detail link, and wait for Media Metadata and Extras Getter before continuing.
+- Give Amazon Prime Queue captures a ten-second quiet window so episode
+  manifests and keys can replace ad or trailer activity, and automatically
+  retry the same episode instead of asking for an unusable manual Play action.
+- Show the identified Amazon Prime series, episode position, and episode title
+  in individual-mode Terminal headers instead of the provider hostname.
+- Hand Disney+ episode jobs to Media Metadata and Extras Getter using the exact newly completed media file,
   and honor English-only subtitle selection for separately captured Disney+
   subtitle playlists in both normal and Queue Mode workflows.
-- Auto-use a captured Crunchyroll watch-page URL for the MME handoff, matching
-  the existing BroadwayHD-to-LPMAEG convenience. A current watch page overrides
+- Auto-use a captured Crunchyroll watch-page URL for the Media Metadata and Extras Getter handoff, matching
+  the existing BroadwayHD-to-Live Performance Metadata and Extras Getter convenience. A current watch page overrides
   a stale saved Crunchyroll series link, while other providers retain manual
   detail-link behavior.
 - Give automatic Crunchyroll handoffs a neutral temporary watch-ID save name,
-  track the exact video completed by that command, and hand that file to MME so
+  track the exact video completed by that command, and hand that file to Media Metadata and Extras Getter so
   timestamp digits cannot be misread as an episode position.
 - Create and reuse one dedicated browser tab for sequential provider capture,
   leaving every pre-existing user tab untouched.
-- Reuse one unambiguous existing MME series folder while ignoring a trailing
+- Reuse one unambiguous existing Media Metadata and Extras Getter series folder while ignoring a trailing
   `(year)`, `(year-year)`, or `(year-)` label; never guess between ambiguous
   same-title year variants.
 - Add a Queue Mode option to close only the exact successful Terminal windows
@@ -46,8 +102,10 @@ before it is committed.
 - Add native-companion messaging support while keeping the separately packaged
   companion development project ignored by this extension repository.
 - Add an unlimited manual episode-link alternative with visible add and delete
-  controls so providers without automatic catalogue adapters can still use the
-  sequential queue.
+  controls so providers without catalogue adapters can still use the
+  sequential queue. Give every manual item its own optional metadata detail
+  link, and let contiguous items from the same series share the one supplied
+  link while their remaining fields stay blank.
 - Capture public HLS, DASH, and Smooth Streaming manifest requests, including
   native media-player playlist traffic, and show a no-key download command in
   the same captured-media workflow.
@@ -76,7 +134,7 @@ before it is committed.
 - Document macOS Tahoe 26.5.2 with Firefox 152.0.6 as this fork's verified
   macOS development and test environment.
 - Add a compact Metadata and Extras Getter card directly below Command options,
-  with a one-choice dropdown for LPMAEG or MME, separate saved setup for each,
+  with a one-choice dropdown for Live Performance Metadata and Extras Getter or Media Metadata and Extras Getter, separate saved setup for each,
   and the same safe handoff arguments.
 - Refresh the popup with a modern light/dark layout and a unified
   media/metadata toolbar and popup icon set.
@@ -84,13 +142,20 @@ before it is committed.
   and metadata-getter cards, reducing scrolling without changing captured-key behavior.
 - Rename captured subtitle sidecars to Jellyfin's video-stem-plus-language
   convention (for example, `Once.en_us.srt`) and preserve that association when
-  the optional LPMAEG handoff renames a generic downloader video.
-- Auto-use a captured BroadwayHD detail-page URL for the LPMAEG handoff when it
+  the optional Live Performance Metadata and Extras Getter handoff renames a generic downloader video.
+- Auto-use a captured BroadwayHD detail-page URL for the Live Performance Metadata and Extras Getter handoff when it
   matches `broadwayhd.com/video/<id>`, while retaining manual links for every
   other provider.
 
 ### Changed
 
+- Use upstream-style message-property interception only on Amazon Prime Video,
+  allowing Amazon's original trusted license event to reach its player while
+  MediaFab substitutes the re-signed challenge. All other sites retain the
+  existing replacement-event interception path.
+- Remove the abandoned Paramount+ browser interception, ad-wrapper inspection,
+  and programme-track selection experiment now that Paramount+ uses
+  the separately configured backend route.
 - Give MediaFab its own stable `mediafab@mediafab` Firefox extension identity
   and use the same ID in the separately distributed Companion's Native
   Messaging registration.
@@ -105,9 +170,9 @@ before it is committed.
   refresh cached captures through a new request, correct ClearKey identity,
   broaden manifest inspection, and register page hooks only while enabled.
 - Make normal-workflow Companion launches explicitly user initiated: the
-  background never auto-dispatches captured commands, and a compact **Run**
+  background never auto-dispatches captured commands, and a compact Run
   button appears beside each command only while Optional Companion is enabled,
-  connected, and fully configured. Queue Mode remains automatic and sequential.
+  connected, and fully configured. Queue Mode remains sequential.
 - Recolor the existing MediaFab logo, browser toolbar icons, README badges,
   popup, and Queue Mode light/dark themes with the shared green-and-lavender
   project palette while preserving the established icon design.
@@ -115,9 +180,9 @@ before it is committed.
   Mode. Queue controls generate the downloader option string, while the shared
   builder remains responsible for current headers, keys, subtitles, cleanup,
   metadata handoff, and completion gating.
-- Align Crunchyroll Queue Mode with MME's finalized normal-download workflow:
+- Align Crunchyroll Queue Mode with Media Metadata and Extras Getter's finalized normal-download workflow:
   download directly into the user-selected folder, hand off the exact completed
-  episode file, and let MME reuse or create the correct series and season
+  episode file, and let Media Metadata and Extras Getter reuse or create the correct series and season
   structure after external subtitle work finishes.
 - Launch each Queue Mode job through a short private temporary script and a
   pseudo-terminal transcript, keeping the generated command and captured
@@ -148,7 +213,7 @@ before it is committed.
   convert other supported subtitle formats to SRT.
 - Clarify that the core extension remains cross-platform while this fork's
   external-subtitle workflow is currently supported on macOS only.
-- Keep LPMAEG entirely standalone by making its integration an explicit,
+- Keep Live Performance Metadata and Extras Getter entirely standalone by making its integration an explicit,
   post-success generated-command handoff only.
 - Clarify generated macOS command progress with subtitle completion and
   metadata/extras start messages, and use the same MediaFab note prefix for the
@@ -156,16 +221,54 @@ before it is committed.
 
 ### Fixed
 
+- Allow a user-clicked individual-mode Companion launch for up to five minutes
+  after capture while requiring the explicit MediaFab Run action. Queue Mode
+  keeps its stricter five-second automatic-capture requirement.
+- Capture Max DASH manifests issued through native or service-worker media
+  requests, associating an otherwise tabless `h264.io` manifest only when one
+  Max tab is an unambiguous owner. Intercept Max players that register their
+  Widevine callback through `MediaKeySession.onmessage` while retaining the
+  existing replacement-event mode and leaving Amazon-only property mode
+  unchanged. Treat those Max DASH manifests as protected immediately so a
+  delayed or cached license event cannot publish a false no-DRM command that
+  downloads encrypted, scrambled tracks.
+- Inspect Max multi-period DASH manifests and bind captured keys to the longest
+  protected programme period. Generated commands now exclude the clear ad
+  periods, choose the best programme video tier for which a key was actually
+  captured, and select Max's normal audio representation instead of its
+  alternate descriptive-audio track. Pair a captured playback by its programme
+  video key rather than requiring Max's manifest and license PSSH bytes to be
+  identical, and prefer the newest signed manifest when Max refreshes the same
+  asset. Refuse a command when programme video keys and the protected period
+  cannot be paired.
+- Escape dollar signs in generated downloader URLs so Amazon's signed MPD path
+  segments reach N_m3u8DL-RE literally instead of being expanded by zsh and
+  rejected by the CDN with `403 Forbidden`.
 - Replace Queue Mode's static video preparation message with an immediately
-  visible animated progress bar, retaining real percentage and segment progress
-  whenever N_m3u8DL-RE exposes it.
+  visible animated progress bar, retaining real percentage progress whenever
+  N_m3u8DL-RE exposes it without displaying raw segment counts.
+- Keep long finalization and metadata stages visibly active in MediaFab
+  Companion so a completed download percentage does not look like a stalled
+  job while muxing or metadata work continues.
+- Require a protected capture's PSSH to match the selected manifest whenever
+  manifests expose that identity, preventing stale Crunchyroll manifests from
+  being combined with keys from another playback.
+- Select Disney+'s complete HLS master playlist instead of a video-only child
+  rendition, and replace the original capture card when the master arrives
+  after the protected key event.
+- Retain HBO Max's canonical public show or movie identity from page and API
+  data so an authenticated `/video/watch/...` download can complete its
+  exact-file metadata handoff without a manual detail-link override.
+- Ignore BBC iPlayer season and navigation containers while building its Queue
+  Mode episode catalogue, preventing structural season records from appearing
+  as an extra season of episodes.
 - Hold Crunchyroll `/cenc/` manifests on the protected capture path, refresh
   retried request headers, require usable content keys plus Authorization,
   Cookie, and Referer before launch, and use the exact watch page as Referer
   when Firefox omits it from the captured manifest request.
 - Launch Queue Mode downloader jobs as visible, safely quoted Terminal commands
   instead of asking Python to execute the unsigned downloader directly, while
-  retaining completion, failure, sequential-queue, subtitle, and MME tracking.
+  retaining completion, failure, sequential-queue, subtitle, and Media Metadata and Extras Getter tracking.
 - Pause the entire Queue Mode queue when the first Terminal job does not prove
   that it started, preventing one macOS security failure from spawning prompts
   for the remaining selected episodes.
@@ -201,7 +304,7 @@ before it is committed.
   direct requests or subtitle-specific API/manifest fields.
 - Prevent stale or duplicate external subtitle links from producing additional
   sidecars, stalled commands, or inaccurate subtitle counts.
-- Prevent LPMAEG local configuration or removed log entries from being treated
+- Prevent Live Performance Metadata and Extras Getter local configuration or removed log entries from being treated
   as newly captured key records in the popup.
 - Restore the captured-key collapsed view so it shows only the URL until its
   `+` control is opened, without malformed partial input rows.

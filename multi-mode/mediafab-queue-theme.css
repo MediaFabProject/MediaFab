@@ -139,7 +139,8 @@ button.secondary:hover { background: var(--lavender-soft); border-color: var(--l
 .manual-link-section .section-heading { margin-bottom: 10px; }
 .manual-link-list { display: grid; gap: 8px; margin-bottom: 10px; }
 .manual-link-row { display: flex; align-items: stretch; gap: 8px; }
-.manual-link-row input { flex: 1 1 auto; }
+.manual-link-fields { display: grid; flex: 1 1 auto; gap: 7px; }
+.manual-link-row input { width: 100%; }
 .manual-link-row button { flex: 0 0 auto; }
 
 .option-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
@@ -154,11 +155,19 @@ button.secondary:hover { background: var(--lavender-soft); border-color: var(--l
 .status-line.is-warning { color: var(--warning); background: var(--warning-soft); }
 .status-line.is-error { color: var(--danger); background: var(--danger-soft); }
 .code-preview { display: block; min-height: 40px; padding: 10px; overflow-wrap: anywhere; color: var(--code-text); background: var(--code-background); border-radius: 8px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#standard-media-options-card[hidden], #paramountplus-options-card[hidden],
+#metadata-detail-link-fields[hidden], #paramountplus-metadata-link-note[hidden],
+.paramountplus-advanced-settings[hidden] { display: none !important; }
+
+.paramountplus-advanced-toggle { margin: 2px 0 12px; }
+.paramountplus-advanced-settings { padding-top: 2px; border-top: 1px solid var(--border); }
 
 .catalogue-empty { padding: 26px; color: var(--muted); background: var(--surface-muted); border: 1px dashed var(--line); border-radius: 10px; text-align: center; }
 .series-overview { margin: 4px 0 16px; padding: 14px; background: var(--glass-control); border: 1px solid rgba(142, 135, 180, 0.28); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.44); text-align: left; }
 .series-overview.has-poster { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 18px; align-items: start; justify-items: start; }
 .series-poster { width: 132px; aspect-ratio: 2 / 3; object-fit: cover; background: var(--surface-muted); border-radius: 11px; box-shadow: 0 9px 20px rgba(42, 48, 40, 0.2); }
+.series-overview.has-poster.has-landscape-poster { grid-template-columns: 280px minmax(0, 1fr); }
+.series-poster.is-landscape { width: 280px; height: auto; aspect-ratio: auto; object-fit: contain; }
 .series-overview-copy { align-self: start; width: 100%; min-width: 0; text-align: left; }
 .series-overview h3 { margin: 0 0 7px; font-size: 21px; line-height: 1.15; }
 .series-facts { margin: 0 0 10px; color: var(--glass-eyebrow); font-size: 12px; font-weight: 750; }
@@ -240,11 +249,18 @@ td { font-size: 12px; }
     .page-header { padding: 14px; }
     .series-overview.has-poster { grid-template-columns: 100px minmax(0, 1fr); }
     .series-poster { width: 100px; }
+    .series-overview.has-poster.has-landscape-poster { grid-template-columns: 220px minmax(0, 1fr); }
+    .series-poster.is-landscape { width: 220px; }
     .episode-row { grid-template-columns: 30px 64px minmax(150px, 1fr); }
     .episode-row.has-thumbnail { grid-template-columns: 30px 96px 64px minmax(150px, 1fr); }
     .episode-thumbnail, .episode-thumbnail-placeholder { width: 96px; }
     .episode-row:not(.has-thumbnail) .detail-link { grid-column: 3; }
     .episode-row.has-thumbnail .detail-link { grid-column: 4; }
+}
+
+@media (max-width: 600px) {
+    .series-overview.has-poster.has-landscape-poster { grid-template-columns: minmax(0, 1fr); }
+    .series-poster.is-landscape { width: 100%; max-width: 320px; }
 }
 
 /* Vibrant green-lavender garden depth pass. */

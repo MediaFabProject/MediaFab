@@ -2,6 +2,17 @@ import {
     buildNormalMediaCommand,
     filterExternalSubtitlesByLanguage,
 } from '../panel/command-builder.mjs';
+import { getMMEProviderIdentity } from '../panel/metadata-links.mjs';
+import {
+    DEFAULT_PARAMOUNTPLUS_SETTINGS,
+    buildParamountPlusArguments,
+    normalizeParamountPlusSettings,
+} from './paramountplus-settings.mjs';
+import {
+    DEFAULT_BBC_IPLAYER_SETTINGS,
+    buildBBCIPlayerCommand,
+    normalizeBBCIPlayerSettings,
+} from './bbc-iplayer-settings.mjs';
 
 export const MULTI_MODE_STORAGE_KEY = 'multi_mode_settings';
 
@@ -15,6 +26,8 @@ export const DEFAULT_MULTI_MODE_SETTINGS = Object.freeze({
     externalSubtitles: true,
     keepDownloaderLog: false,
     additionalArguments: '',
+    paramountplus: DEFAULT_PARAMOUNTPLUS_SETTINGS,
+    bbciplayer: DEFAULT_BBC_IPLAYER_SETTINGS,
     metadata: {
         enabled: false,
         getter: 'lpmaeg',
@@ -49,6 +62,8 @@ export function normalizeMultiModeSettings(value = {}) {
         useShakaPackager: value.useShakaPackager !== false,
         externalSubtitles: value.externalSubtitles !== false,
         keepDownloaderLog: value.keepDownloaderLog === true,
+        paramountplus: normalizeParamountPlusSettings(value.paramountplus),
+        bbciplayer: normalizeBBCIPlayerSettings(value.bbciplayer),
         metadata: {
             ...DEFAULT_MULTI_MODE_SETTINGS.metadata,
             ...metadata,
@@ -134,29 +149,23 @@ function buildQueueAdditionalArguments(job) {
     ].filter(Boolean).join(' ');
 }
 
-function escapeFindPatternLiteral(value) {
-    return String(value).replace(/[\\*?[\]]/g, '\\$&');
-}
-
 export function createCrunchyrollExistingEpisodeGuard(job, command) {
-    const seasonNumber = Number(job.seasonNumber);
-    const episodeNumber = Number(job.episodeNumber);
-    const seriesTitle = String(job.seriesTitle || '').trim();
     const destination = String(job.outputDirectory || '').trim();
-    if (!['crunchyroll', 'disneyplus'].includes(job.provider)
-        || !Number.isInteger(seasonNumber) || seasonNumber <= 0
-        || !Number.isInteger(episodeNumber) || episodeNumber <= 0
-        || !seriesTitle || !destination) {
+    const identity = getMMEProviderIdentity(
+        job.playbackUrl,
+        job.provider === 'amazon-prime' ? (job.detailUrl || job.amazonEpisodeIdentity?.detailUrl) : '',
+    );
+    if (!identity || !destination) {
         return command;
     }
-    const position = `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
-    const filenamePrefix = `${position} ${escapeFindPatternLiteral(seriesTitle)} - *`;
+    const safeIdentity = identity.id.replace(/[^a-z0-9_-]/gi, '');
+    if (!safeIdentity) return command;
     const videoExtensions = [
         '3gp', 'avi', 'flv', 'm2ts', 'm4v', 'mkv', 'mov', 'mp4',
         'mpeg', 'mpg', 'mts', 'ts', 'webm', 'wmv',
     ];
     const predicates = videoExtensions
-        .map((extension) => `-iname ${quoteShellArgument(`${filenamePrefix}.${extension}`)}`)
+        .map((extension) => `-iname ${quoteShellArgument(`*${safeIdentity}*.${extension}`)}`)
         .join(' -o ');
     return [
         '() {',
@@ -172,6 +181,39 @@ export function createCrunchyrollExistingEpisodeGuard(job, command) {
     ].join(' ');
 }
 
+function canonicalAmazonPrimeEpisodeUrl(value) {
+    try {
+        const parsed = new URL(value);
+        const host = /(^|\.)(?:primevideo\.com|amazon\.(?:ae|ca|cn|com|de|eg|es|fr|in|it|nl|pl|sa|se|sg|co\.jp|co\.uk|com\.au|com\.be|com\.br|com\.mx|com\.tr))$/i;
+        const match = parsed.pathname.match(/\/(?:region\/([^/]+)\/)?detail\/([A-Z0-9]+)(?:\/|$)/i);
+        return host.test(parsed.hostname) && match
+            ? `https://www.primevideo.com/region/${match[1] || 'na'}/detail/${match[2].toUpperCase()}`
+            : '';
+    } catch {
+        return '';
+    }
+}
+
+export function resolveAmazonPrimeQueueEpisode(job, capture = null) {
+    if (job?.provider !== 'amazon-prime') {
+        return '';
+    }
+    const identity = job.amazonEpisodeIdentity;
+    const detailUrl = canonicalAmazonPrimeEpisodeUrl(job.detailUrl);
+    const identityUrl = canonicalAmazonPrimeEpisodeUrl(identity?.detailUrl);
+    const identifiers = [identity?.gti, identity?.compactGTI, identity?.playbackID]
+        .map((value) => String(value || '').trim()).filter(Boolean);
+    if (!detailUrl || detailUrl !== identityUrl || identifiers.length === 0) {
+        throw new Error('Amazon Prime metadata handoff refused: the queued playback is not tied unambiguously to one episode detail URL.');
+    }
+    const captured = capture?.amazonEpisodeIdentity;
+    const capturedUrl = canonicalAmazonPrimeEpisodeUrl(captured?.detailUrl);
+    if (captured?.status !== 'resolved' || !capturedUrl || capturedUrl !== detailUrl) {
+        throw new Error('Amazon Prime metadata handoff refused: the captured playback did not match the queued episode detail URL.');
+    }
+    return detailUrl;
+}
+
 export function buildQueueMediaCommand(job, capture, {
     executableName = 'N_m3u8DL-RE',
     useSingleQuotes = false,
@@ -183,6 +225,8 @@ export function buildQueueMediaCommand(job, capture, {
     const selectedSubtitles = job.subtitleMode === 'english'
         ? filterExternalSubtitlesByLanguage(capturedSubtitles, 'en')
         : capturedSubtitles;
+    const amazonEpisodeDetailUrl = resolveAmazonPrimeQueueEpisode(job, capture);
+    const explicitMetadataDetailLink = job.detailLinkIsOverride ? job.detailUrl : '';
     const command = buildNormalMediaCommand({
         metadata: {
             url: manifest.url,
@@ -191,6 +235,13 @@ export function buildQueueMediaCommand(job, capture, {
             isPublicMedia: keys.length === 0,
             isHlsPlaylistFallback: manifest.type === 'HLS_PLAYLIST',
             pageUrl: job.playbackUrl,
+            amazonEpisodeDetailUrl,
+            amazonEpisodeIdentity: job.amazonEpisodeIdentity || null,
+            maxContentPeriodId: manifest.maxContentPeriodId || null,
+            maxContentPeriodIds: manifest.maxContentPeriodIds || [],
+            maxContentDurationSeconds: manifest.maxContentDurationSeconds || null,
+            maxVideoTracks: manifest.maxVideoTracks || [],
+            maxAudioTracks: manifest.maxAudioTracks || [],
         },
         keyString,
         useSingleQuotes,
@@ -200,11 +251,22 @@ export function buildQueueMediaCommand(job, capture, {
         metadataGetterType: job.metadata?.getter || 'lpmaeg',
         metadataGetterConfig: {
             ...(job.metadata || { enabled: false }),
-            detailLink: job.detailUrl || job.metadata?.detailLink || '',
+            detailLink: explicitMetadataDetailLink || job.detailUrl || '',
+            preferDetailLinkOverride: Boolean(explicitMetadataDetailLink),
         },
         outputDirectory: job.outputDirectory,
     });
+    if (command.startsWith('MediaFab command unavailable:')) {
+        throw new Error(command.replace(/^MediaFab command unavailable:\s*/, ''));
+    }
     return createCrunchyrollExistingEpisodeGuard(job, command);
+}
+
+export function buildQueueLocalCommand(job) {
+    if (job?.provider !== 'bbciplayer' || job?.executionMode !== 'local-command') {
+        throw new Error('This Queue Mode item does not use a local command backend.');
+    }
+    return buildBBCIPlayerCommand(job.sourceUrl || job.playbackUrl, job.outputDirectory, job.bbciplayer);
 }
 
 export function createDirectLinkCatalog(url) {
@@ -231,10 +293,29 @@ export function createDirectLinkCatalog(url) {
 }
 
 export function createManualLinkCatalog(values) {
-    const urls = values.map((value) => new URL(String(value).trim()));
-    if (urls.length === 0 || urls.some((url) => !['http:', 'https:'].includes(url.protocol))) {
-        throw new TypeError('Manual episode links must be public http(s) URLs.');
+    const entries = values.map((value) => {
+        const explicit = value && typeof value === 'object';
+        const playbackValue = explicit ? value.playbackUrl : value;
+        const detailValue = explicit ? String(value.detailUrl || '').trim() : String(value || '').trim();
+        return {
+            playbackUrl: new URL(String(playbackValue || '').trim()),
+            detailUrl: detailValue ? new URL(detailValue) : null,
+            explicit,
+        };
+    });
+    if (entries.length === 0 || entries.some(({ playbackUrl, detailUrl }) =>
+        !['http:', 'https:'].includes(playbackUrl.protocol)
+        || (detailUrl && !['http:', 'https:'].includes(detailUrl.protocol)))) {
+        throw new TypeError('Manual playing-page and detail links must be public http(s) URLs.');
     }
+    const suppliedDetails = entries
+        .map((entry, index) => entry.detailUrl ? { index, href: entry.detailUrl.href } : null)
+        .filter(Boolean);
+    const sharedDetailForIndex = (index) => {
+        if (!suppliedDetails.length) return '';
+        const preceding = [...suppliedDetails].reverse().find((detail) => detail.index <= index);
+        return (preceding || suppliedDetails[0]).href;
+    };
     return {
         provider: 'manual',
         seriesTitle: 'Manual Queue',
@@ -243,20 +324,26 @@ export function createManualLinkCatalog(values) {
             id: 'manual-links',
             number: 1,
             title: 'Manual episode links',
-            episodes: urls.map((url, index) => ({
+            episodes: entries.map((entry, index) => {
+                const url = entry.playbackUrl;
+                return ({
                 id: `manual:${index}:${url.href}`,
                 provider: /(^|\.)crunchyroll\.com$/i.test(url.hostname)
                     ? 'crunchyroll'
                     : /(^|\.)disneyplus\.com$/i.test(url.hostname)
                         ? 'disneyplus'
-                        : 'manual',
+                        : /(^|\.)pbskids\.org$/i.test(url.hostname)
+                            ? 'pbs-kids'
+                            : 'manual',
                 seasonNumber: 1,
                 episodeNumber: index + 1,
                 title: `Episode link ${index + 1}`,
                 playbackUrl: url.href,
-                detailUrl: url.href,
+                detailUrl: entry.explicit ? sharedDetailForIndex(index) : url.href,
+                suppliedDetailUrl: entry.detailUrl?.href || '',
+                detailLinkIsOverride: entry.explicit && Boolean(sharedDetailForIndex(index)),
                 selected: true,
-            })),
+            }); }),
         }],
     };
 }
@@ -296,7 +383,50 @@ export function getSelectionState(episodes = []) {
 
 export function buildBatchJobs(catalog, settings) {
     const normalized = normalizeMultiModeSettings(settings);
-    return getSelectedEpisodes(catalog).map((episode, index) => {
+    const selectedEpisodes = getSelectedEpisodes(catalog);
+    if (catalog?.provider === 'paramountplus' && catalog?.mediaKind === 'series' && catalog?.externalBackend) {
+        if (selectedEpisodes.length === 0) return [];
+        const totalEpisodes = (catalog.seasons || []).reduce(
+            (total, season) => total + (season.episodes || []).length,
+            0,
+        );
+        const wanted = selectedEpisodes.length === totalEpisodes
+            ? ''
+            : selectedEpisodes.map((episode) =>
+                `S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}`
+            ).join(',');
+        return [{
+            id: `${Date.now()}-0-paramountplus-series`,
+            provider: 'paramountplus',
+            seriesTitle: catalog.seriesTitle,
+            seasonNumber: null,
+            episodeNumber: null,
+            title: selectedEpisodes.length === totalEpisodes
+                ? catalog.seriesTitle
+                : `${selectedEpisodes.length} selected episodes`,
+            playbackUrl: catalog.sourceUrl,
+            detailUrl: catalog.sourceUrl,
+            sourceUrl: catalog.sourceUrl,
+            executionMode: 'external-backend',
+            backendId: 'paramountplus',
+            backendArguments: buildParamountPlusArguments({ ...normalized.paramountplus, wanted }),
+            amazonEpisodeIdentity: null,
+            destination: normalized.destination,
+            outputDirectory: normalized.destination,
+            downloaderArguments: buildDownloaderArguments(normalized),
+            additionalArguments: normalized.additionalArguments,
+            useShakaPackager: normalized.useShakaPackager,
+            externalSubtitles: normalized.externalSubtitles,
+            subtitleMode: normalized.subtitleMode,
+            metadata: {
+                ...normalized.metadata,
+                enabled: normalized.metadata.enabled && normalized.metadata.getter === 'mme',
+            },
+            closeTerminalOnComplete: normalized.companion.closeTerminalOnComplete,
+            status: 'waiting',
+        }];
+    }
+    return selectedEpisodes.map((episode, index) => {
         const job = {
             id: `${Date.now()}-${index}-${episode.id}`,
             provider: episode.provider || catalog.provider,
@@ -306,6 +436,19 @@ export function buildBatchJobs(catalog, settings) {
             title: episode.title,
             playbackUrl: episode.playbackUrl,
             detailUrl: episode.detailUrl || normalized.metadata.detailLink || episode.playbackUrl,
+            detailLinkIsOverride: episode.detailLinkIsOverride === true,
+            sourceUrl: episode.sourceUrl || episode.playbackUrl,
+            executionMode: episode.executionMode || 'browser-capture',
+            backendId: episode.backendId || '',
+            backendArguments: episode.executionMode === 'external-backend'
+                ? buildParamountPlusArguments(normalized.paramountplus)
+                : [],
+            bbciplayer: episode.executionMode === 'local-command'
+                ? { ...normalized.bbciplayer }
+                : null,
+            amazonEpisodeIdentity: episode.amazonEpisodeIdentity
+                ? { ...episode.amazonEpisodeIdentity, asins: [...(episode.amazonEpisodeIdentity.asins || [])] }
+                : null,
             destination: normalized.destination,
             outputDirectory: normalized.destination,
             downloaderArguments: buildDownloaderArguments(normalized),
@@ -313,7 +456,12 @@ export function buildBatchJobs(catalog, settings) {
             useShakaPackager: normalized.useShakaPackager,
             externalSubtitles: normalized.externalSubtitles,
             subtitleMode: normalized.subtitleMode,
-            metadata: { ...normalized.metadata },
+            metadata: episode.executionMode === 'local-command'
+                ? { ...normalized.metadata, enabled: false }
+                : episode.executionMode === 'external-backend'
+                ? { ...normalized.metadata, enabled: normalized.metadata.enabled && normalized.metadata.getter === 'mme' }
+                : { ...normalized.metadata },
+            backendHandlesMetadata: episode.executionMode === 'local-command',
             closeTerminalOnComplete: normalized.companion.closeTerminalOnComplete,
             status: 'waiting',
         };

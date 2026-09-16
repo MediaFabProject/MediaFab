@@ -12,9 +12,19 @@ import {
     setSeasonSelected,
     buildBatchJobs,
     buildQueueMediaCommand,
+    buildQueueLocalCommand,
 } from './core.mjs';
 import { discoverProviderCatalog, activateProviderPlayback } from './providers/registry.mjs';
 import { CompanionClient } from './companion.mjs';
+import {
+    buildParamountPlusArguments,
+    mountParamountPlusSettings,
+    normalizeParamountPlusSettings,
+} from './paramountplus-settings.mjs';
+import {
+    mountBBCIPlayerSettings,
+    normalizeBBCIPlayerSettings,
+} from './bbc-iplayer-settings.mjs';
 
 const elements = Object.fromEntries([
     'companion-status', 'darkModeToggle', 'source-link', 'load-link', 'load-status', 'manual-link-list',
@@ -28,6 +38,9 @@ const elements = Object.fromEntries([
     'clear-mediafab-companion-setup', 'mediafab-companion-config-status',
     'start-selected', 'pause-queue', 'cancel-current',
     'retry-failed', 'queue-body',
+    'standard-media-options-card', 'paramountplus-options-card', 'paramountplus-settings-fields',
+    'paramountplus-argument-preview', 'metadata-detail-link-fields', 'paramountplus-metadata-link-note',
+    'bbc-iplayer-options-card', 'bbc-iplayer-settings-fields', 'metadata-card',
 ].map((id) => [id, document.getElementById(id)]));
 
 const companion = new CompanionClient();
@@ -37,7 +50,7 @@ let queueJobs = [];
 let companionConnected = false;
 let connectedCompanionFolder = '';
 let queuePaused = false;
-let manualLinkValues = [''];
+let manualLinkValues = [{ playbackUrl: '', detailUrl: '' }];
 let workerTabId = Number.NaN;
 let activeCapture = null;
 let captureTimeout = null;
@@ -83,6 +96,8 @@ async function saveSharedCompanionConfig() {
 
 async function loadSettings() {
     const stored = await chrome.storage.local.get([MULTI_MODE_STORAGE_KEY]);
+    const paramountplus = await SettingsManager.getParamountPlusSettings();
+    const bbciplayer = await SettingsManager.getBBCIPlayerSettings();
     const getter = await SettingsManager.getSelectedMetadataGetter();
     const metadata = await getSharedMetadataConfig(getter);
     const companionConfig = await SettingsManager.getMediaFabCompanionConfig();
@@ -90,6 +105,8 @@ async function loadSettings() {
         ...DEFAULT_MULTI_MODE_SETTINGS,
         ...(stored[MULTI_MODE_STORAGE_KEY] || {}),
         companion: companionConfig,
+        paramountplus,
+        bbciplayer,
     }, getter, metadata);
 }
 
@@ -103,6 +120,8 @@ async function refreshSharedMetadataSettings() {
 async function saveSettings({ syncMetadata = false, syncCompanion = false } = {}) {
     settings = normalizeMultiModeSettings(settings);
     await chrome.storage.local.set({ [MULTI_MODE_STORAGE_KEY]: settings });
+    await SettingsManager.saveParamountPlusSettings(settings.paramountplus);
+    await SettingsManager.saveBBCIPlayerSettings(settings.bbciplayer);
     if (syncMetadata) {
         await saveSharedMetadataConfig();
     }
@@ -158,11 +177,20 @@ function writeSettingsToForm() {
 }
 
 function updateSettingsPresentation() {
+    const isParamountPlus = catalog?.provider === 'paramountplus';
+    const isBBCIPlayer = catalog?.provider === 'bbciplayer';
+    elements['standard-media-options-card'].hidden = isParamountPlus || isBBCIPlayer;
+    elements['paramountplus-options-card'].hidden = !isParamountPlus;
+    elements['bbc-iplayer-options-card'].hidden = !isBBCIPlayer;
+    elements['metadata-card'].hidden = isBBCIPlayer;
+    elements['metadata-detail-link-fields'].hidden = isParamountPlus;
+    elements['paramountplus-metadata-link-note'].hidden = !isParamountPlus;
+    elements['paramountplus-argument-preview'].textContent = buildParamountPlusArguments(settings.paramountplus).join(' ');
     elements['argument-preview'].textContent = formatDownloaderArgumentPreview(settings);
     const isLPMAEG = settings.metadata.getter === 'lpmaeg';
     elements['metadata-description'].textContent = isLPMAEG
         ? 'Uses each queued episode’s public detail-page link after its media and subtitles complete. BroadwayHD video links remain automatic.'
-        : 'Uses each queued episode’s public detail-page link after its media and subtitles complete.';
+        : 'Runs for each completed item after its media, subtitles, naming, and cleanup finish, before Queue Mode advances.';
     elements['metadata-project-folder'].placeholder = isLPMAEG
         ? '/Users/you/Live-Performance-Metadata-and-Extras-Getter'
         : '/Users/you/Media-Metadata-and-Extras-Getter';
@@ -177,13 +205,13 @@ function normalizedFolder(value) {
 
 function companionConfigurationError() {
     if (!settings.companion.projectFolder.startsWith('/')) {
-        return 'Enter MediaFab Queue Mode Companion’s absolute folder path.';
+        return 'Enter MediaFab Companion’s absolute folder path.';
     }
     if (!companionConnected) {
-        return 'MediaFab Queue Mode Companion is unavailable.';
+        return 'MediaFab Companion is unavailable.';
     }
     if (connectedCompanionFolder && normalizedFolder(settings.companion.projectFolder) !== normalizedFolder(connectedCompanionFolder)) {
-        return 'This folder does not match the installed MediaFab Queue Mode Companion. Reinstall it from this folder.';
+        return 'This folder does not match the installed MediaFab Companion. Reinstall it from this folder.';
     }
     return '';
 }
@@ -205,18 +233,24 @@ function refreshMetadataStatus() {
     if (!settings.metadata.projectFolder.startsWith('/')) {
         setStatus(
             elements['metadata-status'],
-            `Enter ${settings.metadata.getter === 'mme' ? 'MME' : 'LPMAEG'}’s absolute project-folder path.`,
+            `Enter ${settings.metadata.getter === 'mme' ? 'Media Metadata and Extras Getter' : 'Live Performance Metadata and Extras Getter'}’s absolute project-folder path.`,
             'warning'
         );
         return;
     }
-    const selected = getSelectedEpisodes(catalog);
-    const missingLinks = selected.filter((episode) => !episode.detailUrl && !settings.metadata.detailLink);
-    if (missingLinks.length > 0) {
-        setStatus(elements['metadata-status'], `${missingLinks.length} selected episode(s) need a public detail-page link.`, 'warning');
-        return;
+    if (catalog?.provider === 'paramountplus') {
+        if (settings.metadata.getter !== 'mme') {
+            setStatus(elements['metadata-status'], 'Paramount+ handoff requires Media Metadata and Extras Getter.', 'warning');
+            return;
+        }
     }
-    setStatus(elements['metadata-status'], 'Ready — included in each episode’s normal extension command.', 'ready');
+    setStatus(
+        elements['metadata-status'],
+        settings.metadata.getter === 'mme'
+            ? 'Ready — runs after each item completes and before Queue Mode advances.'
+            : 'Ready — included in each episode’s normal extension command.',
+        'ready',
+    );
 }
 
 function refreshStartAvailability() {
@@ -262,13 +296,23 @@ function renderManualLinks() {
     manualLinkValues.forEach((value, index) => {
         const row = document.createElement('div');
         row.className = 'manual-link-row';
-        const input = document.createElement('input');
-        input.type = 'url';
-        input.placeholder = `Episode playing-page link ${index + 1}`;
-        input.autocomplete = 'off';
-        input.value = value;
-        input.addEventListener('input', () => {
-            manualLinkValues[index] = input.value;
+        const fields = document.createElement('div');
+        fields.className = 'manual-link-fields';
+        const playbackInput = document.createElement('input');
+        playbackInput.type = 'url';
+        playbackInput.placeholder = `Media playing-page link ${index + 1}`;
+        playbackInput.autocomplete = 'off';
+        playbackInput.value = value.playbackUrl;
+        playbackInput.addEventListener('input', () => {
+            manualLinkValues[index].playbackUrl = playbackInput.value;
+        });
+        const detailInput = document.createElement('input');
+        detailInput.type = 'url';
+        detailInput.placeholder = `Metadata detail link ${index + 1} (optional when shared)`;
+        detailInput.autocomplete = 'off';
+        detailInput.value = value.detailUrl;
+        detailInput.addEventListener('input', () => {
+            manualLinkValues[index].detailUrl = detailInput.value;
         });
         const remove = document.createElement('button');
         remove.type = 'button';
@@ -277,17 +321,20 @@ function renderManualLinks() {
         remove.addEventListener('click', () => {
             manualLinkValues.splice(index, 1);
             if (manualLinkValues.length === 0) {
-                manualLinkValues.push('');
+                manualLinkValues.push({ playbackUrl: '', detailUrl: '' });
             }
             renderManualLinks();
         });
-        row.append(input, remove);
+        fields.append(playbackInput, detailInput);
+        row.append(fields, remove);
         elements['manual-link-list'].append(row);
     });
 }
 
 function useManualLinks() {
-    const links = manualLinkValues.map((value) => value.trim()).filter(Boolean);
+    const links = manualLinkValues
+        .map((value) => ({ playbackUrl: value.playbackUrl.trim(), detailUrl: value.detailUrl.trim() }))
+        .filter((value) => value.playbackUrl);
     if (links.length === 0) {
         setStatus(elements['load-status'], 'Enter at least one episode playing-page link.', 'warning');
         return;
@@ -295,7 +342,7 @@ function useManualLinks() {
     try {
         catalog = createManualLinkCatalog(links);
         renderCatalogue();
-        setStatus(elements['load-status'], `Loaded ${links.length} manual episode link(s).`, 'ready');
+        setStatus(elements['load-status'], `Loaded ${links.length} manual media link(s).`, 'ready');
     } catch (error) {
         setStatus(elements['load-status'], error.message, 'error');
     }
@@ -352,12 +399,101 @@ function activeDownloadCount() {
     return queueJobs.filter((job) => job.status === 'downloading').length;
 }
 
+async function retryActiveCapture(job, navigationId) {
+    if (activeCapture?.navigationId !== navigationId || job.status !== 'capturing') {
+        return;
+    }
+    job.captureAttempts = Number(job.captureAttempts || 0) + 1;
+    job.status = 'waiting';
+    job.captureStatus = `Retrying this episode automatically (attempt ${job.captureAttempts + 1})`;
+    renderQueue();
+    await releaseActiveCapture({ next: false });
+    setTimeout(() => advanceCaptureLane(), 1000);
+}
+
+function requestAutomaticPlayback(job, navigationId, tabId) {
+    activateProviderPlayback(job.provider, tabId).then((response) => {
+        if (activeCapture?.navigationId !== navigationId || job.status !== 'capturing') {
+            return;
+        }
+        if (response?.activated) {
+            job.captureStatus = 'Playback requested; waiting for a fresh manifest';
+            renderQueue();
+            return;
+        }
+        job.captureStatus = 'Retrying this episode automatically';
+        renderQueue();
+        setTimeout(() => requestAutomaticPlayback(job, navigationId, tabId), 2000);
+    }).catch(() => {
+        if (activeCapture?.navigationId !== navigationId || job.status !== 'capturing') {
+            return;
+        }
+        job.captureStatus = 'Retrying this episode automatically';
+        renderQueue();
+        setTimeout(() => requestAutomaticPlayback(job, navigationId, tabId), 2000);
+    });
+}
+
 async function advanceCaptureLane() {
     if (queuePaused || activeCapture || activeDownloadCount() >= 1) {
         return;
     }
     const job = queueJobs.find((candidate) => candidate.status === 'waiting');
     if (!job) {
+        return;
+    }
+
+    if (job.executionMode === 'external-backend') {
+        job.status = 'launching';
+        job.captureStatus = 'Starting the locally configured backend';
+        renderQueue();
+        try {
+            const response = await companion.request('launch_external_job', {
+                jobId: job.id,
+                backendId: job.backendId,
+            });
+            job.status = 'downloading';
+            job.captureStatus = 'No browser capture needed';
+            job.downloadStatus = response.message || 'Starting';
+            job.subtitleStatus = job.subtitleMode === 'none' ? 'Off' : 'Handled by backend';
+            job.metadataStatus = job.metadata.enabled ? 'Included in this item' : 'Off';
+        } catch (error) {
+            job.status = 'failed';
+            job.captureStatus = `Failed: ${error.message}`;
+            if (error.pauseQueue) {
+                queuePaused = true;
+                elements['pause-queue'].textContent = 'Resume queue';
+            }
+        }
+        renderQueue();
+        return;
+    }
+
+    if (job.executionMode === 'local-command') {
+        job.status = 'launching';
+        job.captureStatus = 'Starting iPlayer Media and Extras Getter';
+        renderQueue();
+        try {
+            const capturedAtMs = Date.now();
+            const response = await companion.request('launch_job', {
+                jobId: job.id,
+                capture: { capturedAtMs },
+                command: buildQueueLocalCommand(job),
+            });
+            job.status = 'downloading';
+            job.captureStatus = `Launched in ${response.launchDelayMs} ms`;
+            job.downloadStatus = 'Starting';
+            job.subtitleStatus = job.bbciplayer?.subtitles === false ? 'Off' : 'Included in command';
+            job.metadataStatus = 'Included in command';
+        } catch (error) {
+            job.status = 'failed';
+            job.captureStatus = `Failed: ${error.message}`;
+            if (error.pauseQueue) {
+                queuePaused = true;
+                elements['pause-queue'].textContent = 'Resume queue';
+            }
+        }
+        renderQueue();
         return;
     }
 
@@ -375,6 +511,7 @@ async function advanceCaptureLane() {
             jobId: job.id,
             navigationId,
             pageUrl: job.playbackUrl,
+            amazonEpisodeIdentity: job.amazonEpisodeIdentity,
         });
         if (!registered?.ok) {
             throw new Error('The extension background did not accept capture ownership.');
@@ -383,29 +520,20 @@ async function advanceCaptureLane() {
         job.captureStatus = 'Waiting for playback and a fresh manifest';
         renderQueue();
 
-        activateProviderPlayback(job.provider, worker.id).then((response) => {
-            if (activeCapture?.navigationId !== navigationId || job.status !== 'capturing') {
-                return;
-            }
-            job.captureStatus = response?.activated
-                ? 'Playback requested; waiting for a fresh manifest'
-                : 'Press Play in the active episode tab';
-            renderQueue();
-        }).catch(() => {
-            if (activeCapture?.navigationId === navigationId && job.status === 'capturing') {
-                job.captureStatus = 'Press Play in the active episode tab';
-                renderQueue();
-            }
-        });
+        requestAutomaticPlayback(job, navigationId, worker.id);
 
         captureTimeout = setTimeout(async () => {
             if (activeCapture?.navigationId !== navigationId) {
                 return;
             }
-            job.status = 'failed';
-            job.captureStatus = 'Timed out waiting for playback';
-            renderQueue();
-            await releaseActiveCapture();
+            if (job.provider === 'amazon-prime') {
+                await retryActiveCapture(job, navigationId);
+            } else {
+                job.status = 'failed';
+                job.captureStatus = 'Timed out waiting for playback';
+                renderQueue();
+                await releaseActiveCapture();
+            }
         }, CAPTURE_TIMEOUT_MS);
     } catch (error) {
         job.status = 'failed';
@@ -431,6 +559,12 @@ function safeImageUrl(value) {
     }
 }
 
+function applySeriesArtworkShape(poster, overview, shape) {
+    const isLandscape = shape === 'landscape';
+    poster.classList.toggle('is-landscape', isLandscape);
+    overview.classList.toggle('has-landscape-poster', isLandscape);
+}
+
 function renderSeriesOverview() {
     if (!catalog || catalog.discovery !== 'provider-adapter') {
         return null;
@@ -443,9 +577,19 @@ function renderSeriesOverview() {
         overview.classList.add('has-poster');
         const poster = document.createElement('img');
         poster.className = 'series-poster';
-        poster.src = posterUrl;
         poster.alt = `${catalog.seriesTitle} poster`;
         poster.referrerPolicy = 'no-referrer';
+        applySeriesArtworkShape(poster, overview, catalog.seriesArtworkShape);
+        poster.addEventListener('load', () => {
+            if (poster.naturalWidth > 0 && poster.naturalHeight > 0) {
+                applySeriesArtworkShape(
+                    poster,
+                    overview,
+                    poster.naturalWidth > poster.naturalHeight ? 'landscape' : 'portrait',
+                );
+            }
+        });
+        poster.src = posterUrl;
         overview.append(poster);
     }
 
@@ -608,7 +752,11 @@ function renderQueue() {
         const subtitles = document.createElement('td');
         subtitles.textContent = job.subtitleStatus || (job.externalSubtitles ? 'Waiting' : 'Off');
         const metadata = document.createElement('td');
-        metadata.textContent = job.metadata.enabled ? (job.metadataStatus || 'Waiting') : 'Off';
+        metadata.textContent = job.backendHandlesMetadata
+            ? (job.metadataStatus || 'Included in command')
+            : job.executionMode === 'external-backend'
+            ? (job.metadataStatus || (job.metadata.enabled ? 'Waiting for Media Metadata and Extras Getter' : 'Off'))
+            : job.metadata.enabled ? (job.metadataStatus || 'Waiting') : 'Off';
         row.append(mediaCell, capture, download, subtitles, metadata);
         elements['queue-body'].append(row);
     }
@@ -632,10 +780,16 @@ async function loadLink() {
         catalog = await discoverProviderCatalog(parsed.href);
         if (catalog) {
             catalog.discovery = 'provider-adapter';
+            if (catalog.provider === 'paramountplus') {
+                const mme = await SettingsManager.getMMEConfig();
+                settings.metadata = { ...mme, getter: 'mme' };
+                await SettingsManager.saveSelectedMetadataGetter('mme');
+                writeSettingsToForm();
+            }
             setStatus(elements['load-status'], `Loaded ${catalog.seriesTitle}.`, 'ready');
         } else {
             catalog = null;
-            manualLinkValues = [parsed.href];
+            manualLinkValues = [{ playbackUrl: parsed.href, detailUrl: '' }];
             renderManualLinks();
             setStatus(
                 elements['load-status'],
@@ -656,7 +810,8 @@ async function loadLink() {
 async function startSelected() {
     // Queue tabs can stay open while the normal popup changes the selected
     // getter. Refresh both the getter and its paired configuration immediately
-    // before building jobs so LPMAEG can never be combined with MME's folder,
+    // before building jobs so one metadata getter can never be combined with
+    // the other metadata getter's folder,
     // or vice versa.
     await refreshSharedMetadataSettings();
     readSettingsFromForm();
@@ -674,12 +829,16 @@ async function startSelected() {
         setStatus(elements['load-status'], 'Choose an absolute destination before starting.', 'warning');
         return;
     }
-    if (settings.metadata.enabled && !settings.metadata.projectFolder.startsWith('/')) {
+    if (jobs.some((job) => job.metadata.enabled) && !settings.metadata.projectFolder.startsWith('/')) {
         setStatus(
             elements['load-status'],
-            `Enter ${settings.metadata.getter === 'mme' ? 'MME' : 'LPMAEG'}’s absolute project-folder path before starting.`,
+            `Enter ${settings.metadata.getter === 'mme' ? 'Media Metadata and Extras Getter' : 'Live Performance Metadata and Extras Getter'}’s absolute project-folder path before starting.`,
             'warning',
         );
+        return;
+    }
+    if (catalog?.provider === 'paramountplus' && settings.metadata.enabled && settings.metadata.getter !== 'mme') {
+        setStatus(elements['load-status'], 'Paramount+ metadata handoff requires Media Metadata and Extras Getter.', 'warning');
         return;
     }
     const companionError = companionConfigurationError();
@@ -695,17 +854,34 @@ async function startSelected() {
     elements['start-selected'].disabled = true;
     try {
         const executableName = await SettingsManager.getExecutableName();
-        await companion.request('preflight', {
-            destination: settings.destination,
-            executableName,
-            companionFolder: settings.companion.projectFolder,
-        });
+        const browserJobs = jobs.filter((job) => job.executionMode === 'browser-capture');
+        const externalBackendIds = [...new Set(jobs
+            .filter((job) => job.executionMode === 'external-backend')
+            .map((job) => job.backendId))];
+        if (browserJobs.length > 0) {
+            await companion.request('preflight', {
+                destination: settings.destination,
+                executableName,
+                companionFolder: settings.companion.projectFolder,
+            });
+        }
+        if (externalBackendIds.length > 0) {
+            await companion.request('preflight_external_backends', {
+                backendIds: externalBackendIds,
+                jobs: jobs.filter((job) => job.executionMode === 'external-backend'),
+                destination: settings.destination,
+                companionFolder: settings.companion.projectFolder,
+            });
+        }
         const response = await companion.request('prepare_batch', {
             jobs,
         });
         queueJobs = response.jobs || jobs;
         renderQueue();
-        setStatus(elements['load-status'], `${jobs.length} job(s) accepted. The capture lane is opening the first waiting link now.`, 'ready');
+        const queueAction = jobs.every((job) => job.executionMode !== 'browser-capture')
+            ? 'The first local job is starting now.'
+            : 'The capture lane is opening the first waiting link now.';
+        setStatus(elements['load-status'], `${jobs.length} job(s) accepted. ${queueAction}`, 'ready');
         await advanceCaptureLane();
     } catch (error) {
         setStatus(elements['load-status'], error.message, 'error');
@@ -720,6 +896,12 @@ function updateJobFromEvent(message) {
         return;
     }
     Object.assign(job, message.changes || {});
+    if (job.backendHandlesMetadata && ['completed', 'skipped'].includes(job.status)) {
+        job.metadataStatus = job.status === 'completed' ? 'Complete' : 'Already present';
+        job.subtitleStatus = job.bbciplayer?.subtitles === false
+            ? 'Off'
+            : job.status === 'completed' ? 'Complete' : 'Already present';
+    }
     renderQueue();
     if (job.status === 'failed') {
         queuePaused = true;
@@ -794,7 +976,7 @@ function bindEvents() {
         }
     });
     elements['add-manual-link'].addEventListener('click', () => {
-        manualLinkValues.push('');
+        manualLinkValues.push({ playbackUrl: '', detailUrl: '' });
         renderManualLinks();
         elements['manual-link-list'].lastElementChild?.querySelector('input')?.focus();
     });
@@ -861,7 +1043,6 @@ function bindEvents() {
     });
     elements['close-terminal-on-complete'].addEventListener('change', async () => {
         readSettingsFromForm();
-        updateSettingsPresentation();
         await saveSettings({ syncCompanion: true });
     });
     elements['clear-mediafab-companion-setup'].addEventListener('click', async () => {
@@ -928,7 +1109,7 @@ function bindEvents() {
         if (message.type === 'connection') {
             companionConnected = message.connected;
             setCompanionStatus(
-                message.connected ? `MediaFab Queue Mode Companion ${message.message}` : `MediaFab Queue Mode Companion unavailable — ${message.message}`,
+                message.connected ? `MediaFab Companion ${message.message}` : `MediaFab Companion unavailable — ${message.message}`,
                 message.connected ? 'connecting' : 'error'
             );
             refreshCompanionConfigurationStatus();
@@ -957,6 +1138,16 @@ async function initialize() {
     renderManualLinks();
     SettingsManager.setDarkMode(await SettingsManager.getDarkMode());
     settings = await loadSettings();
+    mountParamountPlusSettings(elements['paramountplus-settings-fields'], settings.paramountplus, async (next) => {
+        settings.paramountplus = normalizeParamountPlusSettings(next);
+        updateSettingsPresentation();
+        await saveSettings();
+    });
+    mountBBCIPlayerSettings(elements['bbc-iplayer-settings-fields'], settings.bbciplayer, async (next) => {
+        settings.bbciplayer = normalizeBBCIPlayerSettings(next);
+        updateSettingsPresentation();
+        await saveSettings();
+    });
     writeSettingsToForm();
     renderCatalogue();
     renderQueue();
@@ -965,11 +1156,11 @@ async function initialize() {
         const hello = await companion.request('hello', { protocolVersion: 1 });
         companionConnected = true;
         connectedCompanionFolder = hello.projectFolder || '';
-        setCompanionStatus(`MediaFab Queue Mode Companion ${hello.version || 'ready'}`, 'ready');
+        setCompanionStatus(`MediaFab Companion ${hello.version || 'ready'}`, 'ready');
     } catch (error) {
         companionConnected = false;
         connectedCompanionFolder = '';
-        setCompanionStatus(`MediaFab Queue Mode Companion unavailable — ${error.message}`, 'error');
+        setCompanionStatus(`MediaFab Companion unavailable — ${error.message}`, 'error');
     }
     refreshCompanionConfigurationStatus();
     refreshStartAvailability();

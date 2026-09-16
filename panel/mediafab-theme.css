@@ -205,6 +205,41 @@ button.secondary:hover { background: var(--lavender-soft); border-color: var(--l
 .always-visible, .expanded-only { margin: 0 0 7px; }
 .expanded-only { display: none; }
 .expanded-only[hidden] { display: none !important; }
+
+#bbc-iplayer-normal-card[hidden],
+#paramountplus-normal-card[hidden],
+#paramountplus-normal-card .paramountplus-advanced-settings[hidden],
+#metadata-getter-detail-link-fields[hidden],
+#paramountplus-normal-metadata-note[hidden],
+.keys-card[hidden],
+.device-card[hidden],
+#command-options[hidden] { display: none !important; }
+
+.paramountplus-option-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 12px;
+}
+
+.paramountplus-check-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px 12px;
+    margin: 14px 0;
+}
+
+.paramountplus-advanced-toggle { margin: 2px 0 12px; }
+.paramountplus-advanced-settings { padding-top: 2px; border-top: 1px solid var(--border); }
+
+.code-preview {
+    display: block;
+    min-height: 38px;
+    padding: 10px;
+    overflow-wrap: anywhere;
+    border-radius: 8px;
+    background: var(--surface-muted);
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .expandableDiv.expanded .expanded-only { display: grid; }
 .expandableDiv.expanded .expanded-only:last-child, .always-visible:last-child { margin-bottom: 0; }
 .key-detail-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }

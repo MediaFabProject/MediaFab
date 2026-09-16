@@ -6,6 +6,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const manifest = JSON.parse(read('../manifest.json'));
 const background = read('../background.js');
 const content = read('../content_script.js');
+const panel = read('../panel/panel.js');
 const cdm = read('../lib/cdm.js');
 const remote = read('../lib/remote_cdm.js');
 
@@ -42,6 +43,56 @@ test('the trusted browser event is stopped before the asynchronous replacement r
     assert.ok(requestIndex > stopIndex);
     assert.match(content, /removeEventListener/);
     assert.match(content, /wrappedMessageListeners/);
+});
+
+test('Amazon Prime alone keeps its trusted event and replaces the message property', () => {
+    assert.match(content, /const amazonPrimeHostPattern =/);
+    assert.match(content, /const isAmazonPrimeVideoPage = amazonPrimeHostPattern\.test\(window\.location\.hostname\)/);
+
+    const amazonBranch = content.slice(
+        content.indexOf('if (isAmazonPrimeVideoPage) {'),
+        content.indexOf('thisArg.dispatchEvent(new MediaKeyMessageEvent'),
+    );
+    assert.match(amazonBranch, /Object\.defineProperty\(event, "message"/);
+    assert.match(amazonBranch, /get: \(\) => copyBytes\(challenge\)\.buffer/);
+    assert.match(amazonBranch, /listener\.handleEvent\.call\(listener, event\)/);
+    assert.doesNotMatch(amazonBranch, /new MediaKeyMessageEvent|stopImmediatePropagation/);
+});
+
+test('HBO Max reports one canonical public show link without changing its playback URL', () => {
+    assert.match(content, /const resolveMaxMetadataLink =/);
+    assert.match(content, /const observeMaxMetadataPayload =/);
+    assert.match(content, /showId\|seriesId\|show_id\|series_id/);
+    assert.match(content, /observeMaxMetadataPayload\(body\)/);
+    assert.match(content, /observeMaxMetadataPayload\(text\)/);
+    assert.match(content, /MAX_METADATA_LINK/);
+    assert.match(content, /https:\/\/www\.hbomax\.com\/\$\{match\[1\]\.toLowerCase\(\)\}/);
+    assert.match(background, /case "MAX_METADATA_LINK"/);
+    assert.match(background, /maxMetadataDetailUrl: maxMetadataLinks\.get\(tab_id\)/);
+    assert.match(background, /chrome\.tabs\.onCreated\.addListener/);
+    assert.match(background, /else if \(!isMaxPageUrl\(nextUrl\)\)/);
+    assert.match(panel, /data-max-episode-id/);
+});
+
+test('Disney+ reports its remembered public entity URL for metadata handoff', () => {
+    assert.match(content, /const resolveDisneyMetadataLink =/);
+    assert.match(content, /DISNEY_METADATA_LINK/);
+    assert.match(background, /case "DISNEY_METADATA_LINK"/);
+    assert.match(background, /disneyMetadataDetailUrl: disneyMetadataLinks\.get\(tab_id\)/);
+    assert.match(background, /else if \(!isDisneyPageUrl\(nextUrl\)\)/);
+    assert.match(background, /function preferredDisneyProtectedManifests/);
+    assert.match(background, /return available\.filter\(isDisneyHlsMaster\)/);
+});
+
+test('protected manifests advertising a different PSSH are never paired with captured keys', () => {
+    assert.match(background, /if \(matching\.length === 0\) return \[\]/);
+    assert.match(background, /manifest\.psshValues\.includes\(pssh\)/);
+});
+
+test('late manifest and metadata updates replace their original protected capture card', () => {
+    assert.match(panel, /entry\.dataset\.capturePssh === protectedPssh/);
+    assert.match(panel, /priorCapture\?\.remove\(\)/);
+    assert.match(panel, /logContainer\.dataset\.capturePssh = protectedPssh/);
 });
 
 test('interception scripts are registered only while MediaFab is enabled', () => {

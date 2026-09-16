@@ -9,19 +9,19 @@ MediaFab is the visible name of this maintained WidevineProxy2 fork. It keeps th
 - Detects external subtitle files from browser traffic and subtitle-specific API or manifest data.
 - Downloads verified subtitle sidecars, converts supported formats to SRT, uses Jellyfin-ready video-stem-plus-language filenames, removes duplicates, and rejects signs/forced-only tracks when a full subtitle is available.
 - Keeps Additional arguments authoritative so container, quality, audio, subtitle, logging, and muxing choices remain under user control.
-- Adds optional post-download handoffs to Media Metadata and Extras Getter (MME) or Live Performance Metadata and Extras Getter (LPMAEG).
-- Automatically uses the current Crunchyroll `/watch/...` page for MME and a matching BroadwayHD video page for LPMAEG.
-- Adds an optional MediaFab Queue Mode Companion handoff for normal single downloads.
+- Adds optional post-download handoffs to Media Metadata and Extras Getter or Live Performance Metadata and Extras Getter.
+- Automatically uses the current Crunchyroll `/watch/...` page for Media Metadata and Extras Getter and a matching BroadwayHD video page for Live Performance Metadata and Extras Getter.
+- Adds an optional MediaFab Companion handoff for normal single downloads.
 - Adds a dedicated Queue Mode tab for selecting discovered episodes or entering any number of playing-page links manually.
 - Uses the same normal command builder in both workflows, including current headers, keys, subtitle handling, cleanup, and optional metadata.
 - Processes Queue Mode jobs strictly one at a time through one newly created dedicated browser tab; existing user tabs are never selected as workers.
 - Opens each completed command immediately in Terminal through the local companion, shows concise animated phase progress, identifies the exact series and episode, and can close only successful job windows when requested.
-- Reuses one unambiguous existing series folder even when MME has added a trailing `(year)`, `(year-year)`, or `(year-)` label.
-- Keeps Queue Mode automatic catalogue discovery provider-limited for safety. Crunchyroll and Disney+ are currently supported; manual episode-link queues remain available for other providers.
+- Reuses one unambiguous existing series folder even when Media Metadata and Extras Getter has added a trailing `(year)`, `(year-year)`, or `(year-)` label.
+- Keeps Queue Mode catalogue discovery provider-limited for safety. Amazon Prime Video, BBC iPlayer, Crunchyroll, Disney+, HBO Max, Paramount+, and PBS KIDS are currently supported; manual episode-link queues remain available for other providers.
 
 ## Current Queue Mode Boundary
 
-Queue Mode requires the separately installed **MediaFab Queue Mode Companion**. Automatic season and episode discovery currently supports Crunchyroll and Disney+. It opens one dedicated browser tab, captures one episode, dispatches its fresh command immediately, waits for the complete video, subtitle, cleanup, and metadata chain, and only then advances to the next episode.
+Queue Mode requires the separately installed **MediaFab Companion**. Season and episode discovery currently supports Amazon Prime Video, BBC iPlayer, Crunchyroll, Disney+, HBO Max, Paramount+, and PBS KIDS. It opens one dedicated browser tab for browser-capture providers, dispatches each fresh command or configured backend job, waits for the complete media, subtitle, cleanup, and metadata chain, and only then advances to the next item.
 
 The Companion is a separately distributed local application and is not included in this repository.
 

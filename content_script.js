@@ -1,6 +1,25 @@
 (async () => {
     const isDisneyPlusPage = /(^|\.)disneyplus\.com$/i.test(window.location.hostname)
         || /^https?:\/\/[^/]*\.?disneyplus\.com\//i.test(document.referrer || '');
+    const amazonPrimeHostPattern = /(^|\.)(?:primevideo\.com|amazon\.(?:ae|ca|cn|com|de|eg|es|fr|in|it|nl|pl|sa|se|sg|co\.jp|co\.uk|com\.au|com\.be|com\.br|com\.mx|com\.tr))$/i;
+    const isAmazonPrimeVideoPage = amazonPrimeHostPattern.test(window.location.hostname)
+        || (() => {
+            try {
+                return amazonPrimeHostPattern.test(new URL(document.referrer || '').hostname);
+            } catch {
+                return false;
+            }
+        })();
+    const maxHostPattern = /(^|\.)(?:max\.com|hbomax\.com)$/i;
+    const isMaxVideoPage = maxHostPattern.test(window.location.hostname)
+        || (() => {
+            try {
+                return maxHostPattern.test(new URL(document.referrer || '').hostname);
+            } catch {
+                return false;
+            }
+        })();
+    const usesOnMessageInterception = isMaxVideoPage;
 
     const proxy = (object, method, handler) => {
         const original = object[method];
@@ -33,6 +52,10 @@
             return "MSS";
         }
     }
+
+    const getManifestPsshValues = (text) => [...String(text || '').matchAll(
+        /<(?:[a-z0-9_-]+:)?pssh\b[^>]*>([\s\S]*?)<\/(?:[a-z0-9_-]+:)?pssh>/gi,
+    )].map((match) => match[1].replace(/\s+/g, '')).filter(Boolean);
 
     const subtitleContextPattern = /subtitle|subtitles|caption|captions|closed.?caption|\bcc\b/i;
     // Only follow a directly downloadable subtitle sidecar. Network requests
@@ -515,10 +538,384 @@
         });
     }
 
+    let lastMaxMetadataLink = '';
+    let observedMaxMetadataLink = '';
+
+    const canonicalMaxShowUrl = (value) => {
+        try {
+            const parsed = new URL(String(value || ''), location.href);
+            if (!maxHostPattern.test(parsed.hostname)) return '';
+            const match = parsed.pathname.match(/(?:^|\/)(show|movie)\/([0-9a-f-]{36})(?:\/|$)/i);
+            return match ? `https://www.hbomax.com/${match[1].toLowerCase()}/${match[2].toLowerCase()}` : '';
+        } catch {
+            return '';
+        }
+    };
+
+    const resolveMaxMetadataLink = () => {
+        if (!isMaxVideoPage) return '';
+        const direct = new Set([
+            location.href,
+            document.referrer,
+            document.querySelector('link[rel="canonical"]')?.href,
+            document.querySelector('meta[property="og:url"]')?.content,
+        ].map(canonicalMaxShowUrl).filter(Boolean));
+        if (direct.size === 1) return [...direct][0];
+        if (observedMaxMetadataLink) return observedMaxMetadataLink;
+
+        const episodeId = location.pathname.match(/(?:^|\/)video\/watch\/([0-9a-f-]{36})(?:\/|$)/i)?.[1];
+        if (!episodeId) return '';
+        const nearby = new Set();
+        for (const script of document.scripts) {
+            const text = script.textContent || '';
+            const identityIndex = text.toLowerCase().indexOf(episodeId.toLowerCase());
+            if (identityIndex < 0) continue;
+            const candidates = [...text.matchAll(/(?:https?:\\?\/\\?\/[^"'\s\\]+)?\\?\/(show|movie)\\?\/([0-9a-f-]{36})/gi)]
+                .map((match) => ({
+                    url: `https://www.hbomax.com/${match[1].toLowerCase()}/${match[2].toLowerCase()}`,
+                    distance: Math.abs((match.index || 0) - identityIndex),
+                }))
+                .sort((left, right) => left.distance - right.distance);
+            if (candidates[0]) nearby.add(candidates[0].url);
+        }
+        return nearby.size === 1 ? [...nearby][0] : '';
+    };
+
+    const emitMaxMetadataLink = () => {
+        const detailUrl = resolveMaxMetadataLink();
+        if (!detailUrl || detailUrl === lastMaxMetadataLink) return;
+        lastMaxMetadataLink = detailUrl;
+        emitAndWaitForResponse('MAX_METADATA_LINK', detailUrl).catch(() => {});
+    };
+
+    const observeMaxMetadataPayload = (payload) => {
+        if (!isMaxVideoPage || typeof payload !== 'string' || payload.length < 20) return;
+        const episodeId = location.pathname.match(/(?:^|\/)video\/watch\/([0-9a-f-]{36})(?:\/|$)/i)?.[1];
+        if (!episodeId) return;
+        const lower = payload.toLowerCase();
+        const identityIndex = lower.indexOf(episodeId.toLowerCase());
+        if (identityIndex < 0) return;
+        const candidates = [];
+        for (const match of payload.matchAll(/(?:https?:\\?\/\\?\/[^"'\s\\]+)?\\?\/(show|movie)\\?\/([0-9a-f-]{36})/gi)) {
+            candidates.push({
+                url: `https://www.hbomax.com/${match[1].toLowerCase()}/${match[2].toLowerCase()}`,
+                distance: Math.abs((match.index || 0) - identityIndex),
+            });
+        }
+        for (const match of payload.matchAll(/["'](?:showId|seriesId|show_id|series_id)["']\s*:\s*["']([0-9a-f-]{36})["']/gi)) {
+            candidates.push({
+                url: `https://www.hbomax.com/show/${match[1].toLowerCase()}`,
+                distance: Math.abs((match.index || 0) - identityIndex),
+            });
+        }
+        candidates.sort((left, right) => left.distance - right.distance);
+        if (!candidates[0]) return;
+        const closestDistance = candidates[0].distance;
+        const closest = new Set(candidates
+            .filter((candidate) => candidate.distance === closestDistance)
+            .map((candidate) => candidate.url));
+        if (closest.size !== 1) return;
+        observedMaxMetadataLink = [...closest][0];
+        emitMaxMetadataLink();
+    };
+
+    if (isMaxVideoPage) {
+        emitMaxMetadataLink();
+        document.addEventListener('DOMContentLoaded', emitMaxMetadataLink, { once: true });
+        const maxMetadataTimer = setInterval(emitMaxMetadataLink, 2000);
+        setTimeout(() => clearInterval(maxMetadataTimer), 30000);
+    }
+
+    let lastDisneyMetadataLink = '';
+
+    const canonicalDisneyEntityUrl = (value) => {
+        try {
+            const parsed = new URL(String(value || ''), location.href);
+            if (!/(^|\.)disneyplus\.com$/i.test(parsed.hostname)) return '';
+            const match = parsed.pathname.match(/\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?browse\/entity-([0-9a-f-]{36})(?:\/|$)/i);
+            return match ? `https://www.disneyplus.com/browse/entity-${match[1].toLowerCase()}` : '';
+        } catch {
+            return '';
+        }
+    };
+
+    const resolveDisneyMetadataLink = () => {
+        if (!isDisneyPlusPage) return '';
+        const direct = new Set([
+            location.href,
+            document.referrer,
+            document.querySelector('link[rel="canonical"]')?.href,
+            document.querySelector('meta[property="og:url"]')?.content,
+        ].map(canonicalDisneyEntityUrl).filter(Boolean));
+        if (direct.size === 1) return [...direct][0];
+
+        const playId = location.pathname.match(/\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?play\/([0-9a-f-]{36})(?:\/|$)/i)?.[1];
+        if (!playId) return '';
+        const nearby = new Set();
+        for (const script of document.scripts) {
+            const text = script.textContent || '';
+            const identityIndex = text.toLowerCase().indexOf(playId.toLowerCase());
+            if (identityIndex < 0) continue;
+            const candidates = [...text.matchAll(/(?:\\?\/)?browse\\?\/entity-([0-9a-f-]{36})/gi)]
+                .map((match) => ({
+                    url: `https://www.disneyplus.com/browse/entity-${match[1].toLowerCase()}`,
+                    distance: Math.abs((match.index || 0) - identityIndex),
+                }))
+                .sort((left, right) => left.distance - right.distance);
+            if (candidates[0]) nearby.add(candidates[0].url);
+        }
+        return nearby.size === 1 ? [...nearby][0] : '';
+    };
+
+    const emitDisneyMetadataLink = () => {
+        const detailUrl = resolveDisneyMetadataLink();
+        if (!detailUrl || detailUrl === lastDisneyMetadataLink) return;
+        lastDisneyMetadataLink = detailUrl;
+        emitAndWaitForResponse('DISNEY_METADATA_LINK', detailUrl).catch(() => {});
+    };
+
+    if (isDisneyPlusPage) {
+        emitDisneyMetadataLink();
+        document.addEventListener('DOMContentLoaded', emitDisneyMetadataLink, { once: true });
+        const disneyMetadataTimer = setInterval(emitDisneyMetadataLink, 2000);
+        setTimeout(() => clearInterval(disneyMetadataTimer), 30000);
+    }
+
+    let amazonHydrationSignature = '';
+    let amazonEpisodeIndex = null;
+    let lastAmazonEpisodeIdentity = '';
+    let currentAmazonEpisodeIdentity = null;
+    const pendingAmazonPlaybackObservations = [];
+
+    const canonicalAmazonEpisodeUrl = (value) => {
+        try {
+            const parsed = new URL(String(value || '').replaceAll('\\u0026', '&'), location.href);
+            const match = parsed.pathname.match(/\/(?:region\/([^/]+)\/)?detail\/([A-Z0-9]+)(?:\/|$)/i);
+            return match
+                ? `https://www.primevideo.com/region/${match[1] || 'na'}/detail/${match[2].toUpperCase()}`
+                : '';
+        } catch {
+            return '';
+        }
+    };
+
+    const amazonPrimaryPlayback = (action) => {
+        for (const item of Array.isArray(action?.primaryActions) ? action.primaryActions : []) {
+            const playback = item?.payload?.playback;
+            if (String(item?.actionType || '').toUpperCase() === 'PLAY'
+                && playback && typeof playback === 'object' && playback.isTrailer !== true) {
+                return playback;
+            }
+        }
+        return {};
+    };
+
+    const buildAmazonEpisodeIndex = () => {
+        if (!isAmazonPrimeVideoPage) {
+            return null;
+        }
+        const script = document.getElementById('dv-web-page-hydration-data');
+        const signature = script?.textContent || '';
+        if (!signature) {
+            return null;
+        }
+        if (amazonEpisodeIndex && signature === amazonHydrationSignature) {
+            return amazonEpisodeIndex;
+        }
+        try {
+            const page = JSON.parse(signature);
+            const btf = page?.init?.preparations?.body?.btf?.state || {};
+            const details = btf?.detail?.detail || {};
+            const selves = btf?.self || {};
+            const actions = btf?.action?.btf || {};
+            const headerDetails = page?.init?.preparations?.body?.atf?.state?.detail?.headerDetail || {};
+            const header = Object.values(headerDetails).find((value) => value && typeof value === 'object') || {};
+            const seriesTitle = String(header.parentTitle || header.title || '')
+                .replace(/\s*-?\s*Season\s+\d+\s*$/i, '').trim();
+            const seasonNumber = Number.parseInt(header.seasonNumber, 10) || 0;
+            const ids = Array.isArray(btf?.episodeList?.cardTitleIds)
+                ? btf.episodeList.cardTitleIds
+                : Object.keys(details);
+            const aliases = new Map();
+            const records = [];
+            const addAlias = (value, record) => {
+                const normalized = String(value || '').trim().toUpperCase();
+                if (!normalized) {
+                    return;
+                }
+                if (!aliases.has(normalized)) {
+                    aliases.set(normalized, new Set());
+                }
+                aliases.get(normalized).add(record);
+            };
+            for (const rawGti of ids) {
+                const gti = String(rawGti || '').trim();
+                const detail = details[gti] || {};
+                const self = selves[gti] || {};
+                if (String(detail.titleType || '').toLowerCase() !== 'episode') {
+                    continue;
+                }
+                const detailUrl = canonicalAmazonEpisodeUrl(self.link);
+                const compactGTI = String(self.compactGTI || detailUrl.match(/\/detail\/([A-Z0-9]+)/i)?.[1] || '').trim();
+                const asins = Array.isArray(self.asins) ? self.asins.map(String).filter(Boolean) : [];
+                const playback = amazonPrimaryPlayback(actions[gti]);
+                const playbackID = String(playback.playbackID || gti).trim();
+                if (!gti || !compactGTI || !detailUrl) {
+                    continue;
+                }
+                const record = {
+                    status: 'resolved',
+                    gti,
+                    compactGTI,
+                    asins,
+                    playbackID,
+                    detailUrl,
+                    seriesTitle,
+                    seasonNumber: Number.parseInt(detail.seasonNumber, 10) || seasonNumber,
+                    episodeNumber: Number.parseInt(detail.episodeNumber, 10) || Number.parseInt(self.sequenceNumber, 10) || 0,
+                    episodeTitle: String(detail.title || '').trim(),
+                };
+                records.push(record);
+                [gti, compactGTI, playbackID, ...asins].forEach((value) => addAlias(value, record));
+            }
+            amazonHydrationSignature = signature;
+            amazonEpisodeIndex = { aliases, records };
+            return amazonEpisodeIndex;
+        } catch (error) {
+            console.debug('MediaFab could not read Prime Video episode hydration.', error);
+            return null;
+        }
+    };
+
+    const emitAmazonEpisodeIdentity = (record) => {
+        currentAmazonEpisodeIdentity = record;
+        const serialized = JSON.stringify(record);
+        if (serialized === lastAmazonEpisodeIdentity) {
+            return;
+        }
+        lastAmazonEpisodeIdentity = serialized;
+        emitAndWaitForResponse('AMAZON_PLAYBACK_IDENTITY', serialized).catch(() => {});
+    };
+
+    const amazonIdentityValues = (requestUrl, requestBody = null) => {
+        const values = new Set();
+        const identityKeys = /^(?:asin|asins|titleid|titleids|playbackid|gti|compactgti|catalogid)$/i;
+        const add = (value) => {
+            if (Array.isArray(value)) {
+                value.forEach(add);
+            } else if (typeof value === 'string' || typeof value === 'number') {
+                values.add(String(value).trim().toUpperCase());
+            }
+        };
+        try {
+            const parsed = new URL(requestUrl, location.href);
+            for (const [key, value] of parsed.searchParams) {
+                if (identityKeys.test(key)) {
+                    add(value);
+                }
+            }
+            const pathId = parsed.pathname.match(/\/detail\/([A-Z0-9]+)/i)?.[1];
+            if (pathId) {
+                add(pathId);
+            }
+        } catch {
+            // The body may still contain the selected identity.
+        }
+        const walk = (value, depth = 0) => {
+            if (depth > 10 || value == null) {
+                return;
+            }
+            if (Array.isArray(value)) {
+                value.forEach((item) => walk(item, depth + 1));
+                return;
+            }
+            if (typeof value === 'object') {
+                for (const [key, item] of Object.entries(value)) {
+                    if (identityKeys.test(key)) {
+                        add(item);
+                    } else {
+                        walk(item, depth + 1);
+                    }
+                }
+            }
+        };
+        if (requestBody && typeof requestBody === 'object' && !(requestBody instanceof URLSearchParams)) {
+            walk(requestBody);
+        } else if (requestBody != null) {
+            const text = String(requestBody);
+            try {
+                walk(JSON.parse(text));
+            } catch {
+                try {
+                    for (const [key, value] of new URLSearchParams(text)) {
+                        if (identityKeys.test(key)) {
+                            add(value);
+                        }
+                    }
+                } catch {
+                    // Ignore non-structured request bodies.
+                }
+            }
+        }
+        return values;
+    };
+
+    const observeAmazonPlaybackIdentity = (requestUrl, requestBody = null, force = false) => {
+        if (!isAmazonPrimeVideoPage) {
+            return false;
+        }
+        const playbackRequest = /(?:getplaybackresources|playback|\/cdp\/catalog\/)/i.test(String(requestUrl || ''));
+        if (!force && !playbackRequest) {
+            return false;
+        }
+        const index = buildAmazonEpisodeIndex();
+        if (!index) {
+            pendingAmazonPlaybackObservations.push([requestUrl, requestBody, force]);
+            return false;
+        }
+        const observedValues = amazonIdentityValues(requestUrl, requestBody);
+        const candidates = new Set();
+        for (const value of observedValues) {
+            index.aliases.get(value)?.forEach((record) => candidates.add(record));
+        }
+        if (candidates.size === 1) {
+            emitAmazonEpisodeIdentity([...candidates][0]);
+            return true;
+        }
+        if (playbackRequest && observedValues.size > 0) {
+            emitAmazonEpisodeIdentity({ status: 'unresolved' });
+        }
+        return false;
+    };
+
+    const refreshAmazonEpisodeIdentity = () => {
+        if (!buildAmazonEpisodeIndex()) {
+            return;
+        }
+        observeAmazonPlaybackIdentity(location.href, null, true);
+        const pending = pendingAmazonPlaybackObservations.splice(0);
+        pending.forEach(([url, body, force]) => observeAmazonPlaybackIdentity(url, body, force));
+    };
+
+    if (Boolean(isAmazonPrimeVideoPage)) {
+        document.addEventListener('click', (event) => {
+            const link = event.target?.closest?.('a[href*="/detail/"]');
+            if (link?.href) {
+                observeAmazonPlaybackIdentity(link.href, null, true);
+            }
+        }, true);
+        new MutationObserver(refreshAmazonEpisodeIdentity).observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+        });
+        document.addEventListener('DOMContentLoaded', refreshAmazonEpisodeIdentity, { once: true });
+    }
+
     const mediaKeysServerCertificates = new WeakMap();
     const sessionMediaKeys = new WeakMap();
     const sessionServerCertificates = new WeakMap();
     const wrappedMessageListeners = new WeakMap();
+    const providerOnMessageListeners = new WeakMap();
 
     const copyBytes = (value) => {
         if (value instanceof ArrayBuffer) {
@@ -551,6 +948,74 @@
         });
     }
 
+    if (usesOnMessageInterception && typeof MediaKeySession !== 'undefined'
+        && typeof MediaKeyMessageEvent !== 'undefined') {
+        let descriptorOwner = MediaKeySession.prototype;
+        let onMessageDescriptor = null;
+        while (descriptorOwner && !onMessageDescriptor) {
+            onMessageDescriptor = Object.getOwnPropertyDescriptor(descriptorOwner, 'onmessage');
+            descriptorOwner = Object.getPrototypeOf(descriptorOwner);
+        }
+        if (typeof onMessageDescriptor?.get === 'function'
+            && typeof onMessageDescriptor?.set === 'function') {
+            try {
+                Object.defineProperty(MediaKeySession.prototype, 'onmessage', {
+                    configurable: true,
+                    enumerable: onMessageDescriptor.enumerable,
+                    get() {
+                        return providerOnMessageListeners.get(this)?.original
+                            || onMessageDescriptor.get.call(this);
+                    },
+                    set(listener) {
+                        if (!listener) {
+                            providerOnMessageListeners.delete(this);
+                            onMessageDescriptor.set.call(this, listener);
+                            return;
+                        }
+                        const session = this;
+                        const wrapped = async function(event) {
+                            const isTrustedMessage = event instanceof MediaKeyMessageEvent && event.isTrusted;
+                            const messageBytes = isTrustedMessage ? copyBytes(event.message) : null;
+                            if (isTrustedMessage && messageBytes.byteLength > 2) {
+                                event.stopImmediatePropagation();
+                                event.preventDefault();
+
+                                let challenge = messageBytes;
+                                try {
+                                    const serverCertificate = getServerCertificate(session);
+                                    const payload = JSON.stringify({
+                                        challenge: b64.encode(messageBytes),
+                                        serverCertificate: serverCertificate ? b64.encode(serverCertificate) : null,
+                                    });
+                                    const replacement = await emitAndWaitForResponse('REQUEST', payload);
+                                    if (typeof replacement === 'string' && replacement) {
+                                        challenge = b64.decode(replacement);
+                                    }
+                                } catch (error) {
+                                    console.debug('MediaFab challenge replacement failed; preserving playback.', error);
+                                }
+
+                                session.dispatchEvent(new MediaKeyMessageEvent('message', {
+                                    messageType: event.messageType,
+                                    message: copyBytes(challenge).buffer,
+                                }));
+                                return;
+                            }
+                            if (typeof listener === 'object' && typeof listener.handleEvent === 'function') {
+                                return listener.handleEvent.call(listener, event);
+                            }
+                            return listener.call(this, event);
+                        };
+                        providerOnMessageListeners.set(this, { original: listener, wrapped });
+                        onMessageDescriptor.set.call(this, wrapped);
+                    },
+                });
+            } catch (error) {
+                console.debug('MediaFab could not install the provider onmessage interceptor.', error);
+            }
+        }
+    }
+
     if (typeof EventTarget !== 'undefined') {
         proxy(EventTarget.prototype, 'addEventListener', (target, thisArg, args) => {
             const [type, listener] = args;
@@ -574,11 +1039,13 @@
                     const messageBytes = isTrustedMessage ? copyBytes(event.message) : null;
 
                     if (isTrustedMessage && messageBytes.byteLength > 2) {
-                        // Stop the native event synchronously, before waiting on the
-                        // extension round trip. Otherwise later page listeners can
-                        // send the browser challenge before the replacement exists.
-                        event.stopImmediatePropagation();
-                        event.preventDefault();
+                        if (!isAmazonPrimeVideoPage) {
+                            // Stop the native event synchronously, before waiting on the
+                            // extension round trip. Otherwise later page listeners can
+                            // send the browser challenge before the replacement exists.
+                            event.stopImmediatePropagation();
+                            event.preventDefault();
+                        }
 
                         let challenge = messageBytes;
                         try {
@@ -593,6 +1060,24 @@
                             }
                         } catch (error) {
                             console.debug("MediaFab challenge replacement failed; preserving playback.", error);
+                        }
+
+                        if (isAmazonPrimeVideoPage) {
+                            // Amazon must receive its original trusted event. Replace only
+                            // the event's challenge property, matching upstream property mode.
+                            try {
+                                Object.defineProperty(event, "message", {
+                                    configurable: true,
+                                    get: () => copyBytes(challenge).buffer,
+                                });
+                            } catch (error) {
+                                console.debug("MediaFab Amazon property replacement failed; preserving the original challenge.", error);
+                            }
+
+                            if (typeof listener === 'object' && typeof listener.handleEvent === 'function') {
+                                return listener.handleEvent.call(listener, event);
+                            }
+                            return listener.call(this, event);
                         }
 
                         thisArg.dispatchEvent(new MediaKeyMessageEvent("message", {
@@ -662,6 +1147,7 @@
     });
 
     proxy(XMLHttpRequest.prototype, "send", (target, thisArg, args) => {
+        observeAmazonPlaybackIdentity(thisArg.requestURL, args[0]);
         thisArg.addEventListener("readystatechange", async () => {
             if (thisArg.readyState !== 4) {
                 return;
@@ -702,6 +1188,7 @@
             }
 
             if (body) {
+                observeMaxMetadataPayload(body);
                 const manifest_type = getManifestType(body);
                 if (manifest_type) {
                     console.log("WVP2 FOUND MANIFEST", manifest_type, thisArg.responseURL);
@@ -709,6 +1196,8 @@
                         url: thisArg.responseURL,
                         type: manifest_type,
                         durationSeconds: await getDetectedManifestDuration(body, manifest_type, thisArg.responseURL),
+                        psshValues: getManifestPsshValues(body),
+                        amazonEpisodeIdentity: currentAmazonEpisodeIdentity,
                     }));
                 }
 
@@ -720,19 +1209,31 @@
     });
 
     proxy(window, "fetch", async (target, thisArg, args) => {
+        const request = args[0];
+        const requestUrl = typeof request === 'string' ? request : request?.url;
+        observeAmazonPlaybackIdentity(requestUrl, args[1]?.body);
+        if (isAmazonPrimeVideoPage && request instanceof Request && args[1]?.body == null) {
+            request.clone().text().then((body) => {
+                if (body) {
+                    observeAmazonPlaybackIdentity(requestUrl, body);
+                }
+            }).catch(() => {});
+        }
         const response = await target.apply(thisArg, args);
 
         try {
             if (response) {
-                const request = args[0];
                 const url = response.url || (typeof request === "string" ? request : request?.url);
                 response.clone().text().then(async (text) => {
+                    observeMaxMetadataPayload(text);
                     const manifest_type = getManifestType(text);
                     if (manifest_type && url) {
                         await emitAndWaitForResponse("MANIFEST", JSON.stringify({
                             url,
                             type: manifest_type,
                             durationSeconds: await getDetectedManifestDuration(text, manifest_type, url),
+                            psshValues: getManifestPsshValues(text),
+                            amazonEpisodeIdentity: currentAmazonEpisodeIdentity,
                         }));
                     }
                     await emitSubtitleIfNeeded(url, text);
